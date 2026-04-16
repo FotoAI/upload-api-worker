@@ -8,12 +8,48 @@
 	"main": "src/index.ts",
 	"compatibility_date": "2026-04-16",
 	"observability": {
-		"enabled": true
+		"enabled": true,
 	},
 	"upload_source_maps": true,
-	"compatibility_flags": [
-		"nodejs_compat"
-	]
+	"compatibility_flags": ["nodejs_compat"],
+	"env": {
+		"dev": {
+			"name": "upload-api-worker-dev",
+			"vars": {
+				"AWS_DEFAULT_REGION": "us-west-000",
+				"AWS_ENDPOINT": "https://fotoowl-dev-bucket-1.s3.us-west-000.backblazeb2.com",
+				"AWS_S3_BUCKET": "fotoowl-dev-bucket-1",
+				"API_HOST": "https://dev-api.fotoowl.ai",
+				"API_USERNAME": "eece118d-83b7-4593-9b5a-481e64cd558d",
+				"DOCS_USERNAME": "fotoowl",
+			},
+			// Secrets (set via `.dev.vars` for local dev, or `wrangler secret put` for deployed dev):
+			// - AWS_ACCESS_KEY_ID
+			// - AWS_SECRET_ACCESS_KEY
+			// - API_PASSWORD
+			// - DOCS_PASSWORD
+		},
+		"prod": {
+			"name": "upload-api-worker",
+			"vars": {
+				"AWS_DEFAULT_REGION": "us-west-000",
+				"AWS_ACCESS_KEY_ID": "",
+				"AWS_SECRET_ACCESS_KEY": "",
+				"AWS_ENDPOINT": "",
+				"AWS_S3_BUCKET": "",
+				"API_HOST": "",
+				"API_USERNAME": "",
+				"API_PASSWORD": "",
+				"DOCS_USERNAME": "",
+				"DOCS_PASSWORD": "",
+			},
+			// Secrets (set via `wrangler secret put --env prod`):
+			// - AWS_ACCESS_KEY_ID
+			// - AWS_SECRET_ACCESS_KEY
+			// - API_PASSWORD
+			// - DOCS_PASSWORD
+		},
+	},
 	/**
 	 * Smart Placement
 	 * https://developers.cloudflare.com/workers/configuration/smart-placement/#smart-placement
