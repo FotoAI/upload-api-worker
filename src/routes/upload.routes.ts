@@ -1,7 +1,9 @@
 import { Router } from "express";
 import type { Request } from "express";
+import { waitUntil } from "cloudflare:workers";
 import { B2Service } from "../services/b2.service";
 import { JirayaService } from "../services/jiraya.service";
+import { ImageMetadataService } from "../services/image-metadata.service";
 import { parseUploadHeadersFromExpress } from "../http/headers";
 import { FileSizeExceededError, isFileSizeExceededError, validateContentLengthHeader } from "../http/stream-size";
 import { AppError } from "../errors/app-error";
@@ -11,6 +13,7 @@ const MAX_SINGLE_UPLOAD_BYTES = 1024 * 1024 * 30; // 30MB
 
 const b2 = new B2Service();
 const jiraya = new JirayaService();
+const imageMetadata = new ImageMetadataService();
 
 function requestHeadersToFetchHeaders(req: Request): Headers {
 	const h = new Headers();
@@ -86,13 +89,53 @@ async function handleUpload(req: Request) {
 	let res: Response;
 	try {
 		const nodeStream = req as unknown as import("node:stream").Readable;
+
 		const webStream = nodeReadableToWebStream(nodeStream);
+		let uploadStream = webStream;
+		const requestId = crypto.randomUUID();
 
-		// Buffering (max 30MB) ensures the upstream PUT has a deterministic Content-Length.
-		const bodyBytes = await readStreamToUint8ArrayWithLimit(webStream, MAX_SINGLE_UPLOAD_BYTES);
+		if (imageMetadata.shouldExtractForContentType(headerValues.contentType)) {
+			const [uploadBranch, metadataStream] = webStream.tee();
+			uploadStream = uploadBranch;
+			waitUntil(
+				imageMetadata
+					.extractFromStream({
+						stream: metadataStream,
+						contentType: headerValues.contentType,
+						imageName: headerValues.imageName,
+						requestId,
+					})
+					.then((result) => {
+						if (result.ok) {
+							console.log("[ImageMetadataService] extracted metadata", {
+								requestId,
+								parser: result.parser,
+								bytesRead: result.bytesRead,
+								truncated: result.truncated,
+								imageName: result.imageName,
+								contentType: result.contentType,
+								tags: result.tags,
+							});
+							return;
+						}
+						console.log("[ImageMetadataService] failed metadata extraction", {
+							requestId,
+							parser: result.parser,
+							bytesRead: result.bytesRead,
+							truncated: result.truncated,
+							imageName: result.imageName,
+							contentType: result.contentType,
+							error: result.error,
+						});
+					})
+					.catch(() => undefined),
+			);
+		}
 
+		const bodyBytes = await readStreamToUint8ArrayWithLimit(uploadStream, MAX_SINGLE_UPLOAD_BYTES);
 		res = await b2.upload(bodyBytes, headerValues.bucketKey, headerValues.contentType, headerValues.sha1);
 	} catch (e) {
+		console.error("[UploadRoutes] handleUpload error", { error: e });
 		const isSizeError = isFileSizeExceededError(e);
 		if (isSizeError && headerValues.isCallback === "1") {
 			jiraya.scheduleDeleteImage(headerValues);
@@ -107,6 +150,7 @@ async function handleUpload(req: Request) {
 	}
 
 	if (res.status >= 400) {
+		console.error("[UploadRoutes] handleUpload error", { error: res.status });
 		if (headerValues.isCallback === "1") {
 			jiraya.scheduleDeleteImage(headerValues);
 		}

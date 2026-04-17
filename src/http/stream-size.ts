@@ -1,3 +1,4 @@
+import type { Readable } from "node:stream";
 import { AppError } from "../errors/app-error";
 
 export class FileSizeExceededError extends Error {
@@ -24,6 +25,25 @@ export function validateContentLengthHeader(headers: { get(name: string): string
 	if (!Number.isNaN(size) && size > maxSize) {
 		throw new FileSizeExceededError(size, maxSize);
 	}
+}
+
+/** Read a Node Readable (e.g. Express req) into memory with a hard cap. Prefer this over Readable.toWeb + fetch(body) in Workers Node compat to avoid post-response stream reader errors. */
+export async function readNodeStreamToUint8ArrayWithLimit(stream: Readable, maxBytes: number): Promise<Uint8Array> {
+	const chunks: Buffer[] = [];
+	let total = 0;
+
+	for await (const chunk of stream) {
+		const buf = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+		total += buf.length;
+		if (total > maxBytes) {
+			throw new FileSizeExceededError(total, maxBytes);
+		}
+		chunks.push(buf);
+	}
+
+	if (chunks.length === 0) return new Uint8Array();
+	const out = Buffer.concat(chunks);
+	return new Uint8Array(out.buffer, out.byteOffset, out.byteLength);
 }
 
 export function isFileSizeExceededError(error: unknown): error is FileSizeExceededError {

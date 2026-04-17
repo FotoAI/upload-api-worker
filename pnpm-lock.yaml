@@ -14,9 +14,15 @@ importers:
       '@types/express':
         specifier: ^5.0.6
         version: 5.0.6
+      '@xmldom/xmldom':
+        specifier: github:xmldom/xmldom
+        version: https://codeload.github.com/xmldom/xmldom/tar.gz/9ef2fd297ca527a05ecb11979850317a927cd20c
       aws4fetch:
         specifier: ^1.0.20
         version: 1.0.20
+      exifreader:
+        specifier: ^4.38.1
+        version: 4.38.1
       express:
         specifier: ^5.2.1
         version: 5.2.1
@@ -820,6 +826,15 @@ packages:
   '@vitest/utils@3.2.4':
     resolution: {integrity: sha512-fB2V0JFrQSMsCo9HiSq3Ezpdv4iYaXRG1Sx8edX3MwxfyNn83mKiGzOcH+Fkxt4MHxr3y42fQi1oeAInqgX2QA==}
 
+  '@xmldom/xmldom@0.9.9':
+    resolution: {integrity: sha512-qycIHAucxy/LXAYIjmLmtQ8q9GPnMbnjG1KXhWm9o5sCr6pOYDATkMPiTNa6/v8eELyqOQ2FsEqeoFYmgv/gJg==}
+    engines: {node: '>=14.6'}
+
+  '@xmldom/xmldom@https://codeload.github.com/xmldom/xmldom/tar.gz/9ef2fd297ca527a05ecb11979850317a927cd20c':
+    resolution: {tarball: https://codeload.github.com/xmldom/xmldom/tar.gz/9ef2fd297ca527a05ecb11979850317a927cd20c}
+    version: 0.9.9
+    engines: {node: '>=14.6'}
+
   accepts@2.0.0:
     resolution: {integrity: sha512-5cvg6CtKwfgdmVqY1WIiXKc3Q1bkRqGLi+2W/6ao+6Y7gu/RCwRuAhGEzh5B4KlszSuTLgZYuqFqo5bImjNKng==}
     engines: {node: '>= 0.6'}
@@ -954,6 +969,9 @@ packages:
   etag@1.8.1:
     resolution: {integrity: sha512-aIL5Fx7mawVa300al2BnEE4iNvo1qETxLrPI/o05L7z6go7fCw1J6EQmbK4FmJ2AS7kgVF/KEZWufBfdClMcPg==}
     engines: {node: '>= 0.6'}
+
+  exifreader@4.38.1:
+    resolution: {integrity: sha512-VUQ8pnWJHpnQXPQLgx4XBwjhj+eE0f5t4KhVFn6BnnTYKLf79DfjVRntR5061qE9NZgx2ohvE+JLXe/FWfCaAA==}
 
   expect-type@1.3.0:
     resolution: {integrity: sha512-knvyeauYhqjOYvQ66MznSMs83wmHrCycNEN6Ao+2AeYEfxUIkuiVxdEa1qlGEPK+We3n0THiDciYSsCcgW/DoA==}
@@ -1946,6 +1964,11 @@ snapshots:
       loupe: 3.2.1
       tinyrainbow: 2.0.0
 
+  '@xmldom/xmldom@0.9.9':
+    optional: true
+
+  '@xmldom/xmldom@https://codeload.github.com/xmldom/xmldom/tar.gz/9ef2fd297ca527a05ecb11979850317a927cd20c': {}
+
   accepts@2.0.0:
     dependencies:
       mime-types: 3.0.2
@@ -2104,6 +2127,10 @@ snapshots:
       '@types/estree': 1.0.8
 
   etag@1.8.1: {}
+
+  exifreader@4.38.1:
+    optionalDependencies:
+      '@xmldom/xmldom': 0.9.9
 
   expect-type@1.3.0: {}
 
