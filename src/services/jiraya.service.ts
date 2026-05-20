@@ -3,6 +3,13 @@ import { retryWithExponentialBackoff } from "../utils/retry";
 import type { UploadHeaders } from "../http/headers";
 import { AppError } from "../errors/app-error";
 
+export type TraceContextHeaders = {
+	traceparent?: string;
+	tracestate?: string;
+	baggage?: string;
+	sentryTrace?: string;
+};
+
 export class JirayaService {
 	private readonly endpoint: string;
 	private readonly headers: Headers;
@@ -23,12 +30,18 @@ export class JirayaService {
 		foUploadId?: string,
 		metadata?: Record<string, unknown>,
 		replace?: boolean,
+		traceContext?: TraceContextHeaders,
 	) {
-		waitUntil(this.postImageProcess(headerValues, b2Id, foUploadId, metadata, replace).catch(() => undefined));
+		waitUntil(
+			this.postImageProcess(headerValues, b2Id, foUploadId, metadata, replace, traceContext).catch((e) => {
+				console.error("[JirayaService] postImageProcess failed:", e);
+				return undefined;
+			}),
+		);
 	}
 
-	scheduleDeleteImage(headerValues: UploadHeaders) {
-		waitUntil(this.deleteImage(headerValues).catch(() => undefined));
+	scheduleDeleteImage(headerValues: UploadHeaders, traceContext?: TraceContextHeaders) {
+		waitUntil(this.deleteImage(headerValues, traceContext).catch(() => undefined));
 	}
 
 	async postImageProcess(
@@ -37,11 +50,12 @@ export class JirayaService {
 		foUploadId?: string,
 		metadata?: Record<string, unknown>,
 		replace?: boolean,
+		traceContext?: TraceContextHeaders,
 	): Promise<Response> {
 		const url = `${this.endpoint}/internal/event/picture/process`;
 		const body = JSON.stringify({
 			b2_id: b2Id,
-			upload_id: foUploadId,
+			uuid: foUploadId,
 			replace_image: replace,
 			mime_type: headerValues.contentType,
 			event_id: headerValues.eventId,
@@ -59,7 +73,7 @@ export class JirayaService {
 			collection_ids: headerValues.collectionIds,
 			guest_upload: headerValues.isGuestUpload,
 			compression_factor: headerValues.isCompression ? headerValues.compressionFactor : undefined,
-			metadata: metadata?.tags
+			// metadata: metadata?.tags
 
 		});
 
@@ -67,36 +81,41 @@ export class JirayaService {
 			body,
 		});
 
-		const res = await retryWithExponentialBackoff(
-			() => fetch(url, { method: "POST", headers: this.headers, body }),
-			{
-				maxAttempts: 5,
-				baseDelayMs: 500,
-				shouldRetry: (res) => res.status >= 500 && res.status < 600,
-			},
-		).catch((e) => {
+		// const res = await retryWithExponentialBackoff(
+		// 	() => fetch(url, { method: "POST", headers: this.buildRequestHeaders(traceContext), body }),
+		// 	{
+		// 		maxAttempts: 5,
+		// 		baseDelayMs: 500,
+		// 		shouldRetry: (res) => res.status >= 500 && res.status < 600,
+		// 	},
+		// ).catch((e) => {
+		// 	throw new AppError("UPSTREAM_JIRAYA_FAILED", { details: { reason: "postImageProcess", error: String(e) } });
+		// });
+		try {
+			const res = await fetch(url, { method: "POST", headers: this.buildRequestHeaders(traceContext), body });
+			const responseBody = await res
+				.clone()
+				.text()
+				.catch(() => "<unreadable>");
+			console.log("[JirayaService] postImageProcess response", {
+				status: res.status,
+				ok: res.ok,
+				body: responseBody,
+			});
+			return res;
+		} catch (e) {
 			throw new AppError("UPSTREAM_JIRAYA_FAILED", { details: { reason: "postImageProcess", error: String(e) } });
-		});
+		}
 
-		const responseBody = await res
-			.clone()
-			.text()
-			.catch(() => "<unreadable>");
-		console.log("[JirayaService] postImageProcess response", {
-			status: res.status,
-			ok: res.ok,
-			body: responseBody,
-		});
 
-		return res;
 	}
 
-	async deleteImage(headerValues: UploadHeaders): Promise<Response> {
+	async deleteImage(headerValues: UploadHeaders, traceContext?: TraceContextHeaders): Promise<Response> {
 		const url = `${this.endpoint}/internal/image/delete`;
 		const body = JSON.stringify({ path: headerValues.rawPath });
 
 		const res = await retryWithExponentialBackoff(
-			() => fetch(url, { method: "DELETE", headers: this.headers, body }),
+			() => fetch(url, { method: "DELETE", headers: this.buildRequestHeaders(traceContext), body }),
 			{
 				maxAttempts: 5,
 				baseDelayMs: 500,
@@ -112,6 +131,15 @@ export class JirayaService {
 		});
 
 		return res;
+	}
+
+	private buildRequestHeaders(traceContext?: TraceContextHeaders): Headers {
+		const headers = new Headers(this.headers);
+		if (traceContext?.traceparent) headers.set("traceparent", traceContext.traceparent);
+		if (traceContext?.tracestate) headers.set("tracestate", traceContext.tracestate);
+		if (traceContext?.baggage) headers.set("baggage", traceContext.baggage);
+		if (traceContext?.sentryTrace) headers.set("sentry-trace", traceContext.sentryTrace);
+		return headers;
 	}
 }
 

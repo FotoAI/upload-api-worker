@@ -27,6 +27,15 @@ const imageMetadata = new ImageMetadataService();
 const videoMetadata = new VideoMetadataService();
 const MULTIPART_KV_TTL_SECONDS = 60 * 60 * 24; // 24 hours
 
+function getTraceContextHeaders(request: Request) {
+	return {
+		traceparent: request.headers.get("traceparent") ?? undefined,
+		tracestate: request.headers.get("tracestate") ?? undefined,
+		baggage: request.headers.get("baggage") ?? undefined,
+		sentryTrace: request.headers.get("sentry-trace") ?? undefined,
+	};
+}
+
 type MultipartUploadKvValue = {
 	fo_upload_id: string;
 	metadata?: Record<string, unknown>;
@@ -250,6 +259,7 @@ export async function handleUploadPartRoute(request: Request): Promise<Response>
 
 export async function handleCompleteMultipartRoute(request: Request): Promise<Response> {
 	const h = parseUploadHeaders(request.headers);
+	const traceContext = getTraceContextHeaders(request);
 	try {
 		if (!h.uploadId) throw new AppError("MISSING_HEADER", { details: { header: "X-Bz-Upload-ID" } });
 
@@ -269,6 +279,7 @@ export async function handleCompleteMultipartRoute(request: Request): Promise<Re
 				kvState?.fo_upload_id,
 				extractedMetadata,
 				kvState?.replace === true,
+				traceContext,
 			);
 			// Reusable seam for future multipart metadata extraction pipeline.
 			logMultipartMetadataSeam(h);

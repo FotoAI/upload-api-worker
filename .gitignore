@@ -163,6 +163,7 @@ dist
 .dev.vars*
 !.dev.vars.example
 .env*
+*.vars*
 !.env.example
 .wrangler/
 

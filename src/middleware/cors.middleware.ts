@@ -1,4 +1,6 @@
 const DEFAULT_ALLOW_METHODS = "GET,POST,PUT,DELETE,OPTIONS";
+const DEFAULT_ALLOW_HEADERS =
+	"Authorization,Content-Type,traceparent,tracestate,baggage,sentry-trace,X-Requested-With";
 
 export function buildCorsHeaders(request: Request): Headers {
 	const headers = new Headers();
@@ -7,9 +9,7 @@ export function buildCorsHeaders(request: Request): Headers {
 	headers.set("Access-Control-Max-Age", "86400");
 
 	const reqHeaders = request.headers.get("Access-Control-Request-Headers");
-	if (reqHeaders) {
-		headers.set("Access-Control-Allow-Headers", reqHeaders);
-	}
+	headers.set("Access-Control-Allow-Headers", reqHeaders ?? DEFAULT_ALLOW_HEADERS);
 	return headers;
 }
 

@@ -15,8 +15,18 @@ const jiraya = new JirayaService();
 const imageMetadata = new ImageMetadataService();
 const videoMetadata = new VideoMetadataService();
 
+function getTraceContextHeaders(request: Request) {
+	return {
+		traceparent: request.headers.get("traceparent") ?? undefined,
+		tracestate: request.headers.get("tracestate") ?? undefined,
+		baggage: request.headers.get("baggage") ?? undefined,
+		sentryTrace: request.headers.get("sentry-trace") ?? undefined,
+	};
+}
+
 async function handleUpload(request: Request) {
 	const headerValues = parseUploadHeaders(request.headers);
+	const traceContext = getTraceContextHeaders(request);
 	const contentType = requireImageOrVideoContentType(headerValues.contentType);
 	const foUploadId = headerValues.foUploadId ?? crypto.randomUUID();
 	const replace = Boolean(headerValues.foUploadId);
@@ -162,7 +172,7 @@ async function handleUpload(request: Request) {
 		console.error("[UploadRoutes] handleUpload error", { error: e });
 		const isSizeError = isFileSizeExceededError(e);
 		if (isSizeError && headerValues.isCallback === "1") {
-			jiraya.scheduleDeleteImage(headerValues);
+			jiraya.scheduleDeleteImage(headerValues, traceContext);
 		}
 		if (isSizeError) {
 			throw new AppError("PAYLOAD_TOO_LARGE", {
@@ -176,14 +186,14 @@ async function handleUpload(request: Request) {
 	if (res.status >= 400) {
 		console.error("[UploadRoutes] handleUpload error", { error: res.status });
 		if (headerValues.isCallback === "1") {
-			jiraya.scheduleDeleteImage(headerValues);
+			jiraya.scheduleDeleteImage(headerValues, traceContext);
 		}
 		throw new AppError("UPSTREAM_B2_FAILED", { details: { status: res.status } });
 	}
 
 	const b2Id = res.headers.get("x-amz-version-id") ?? headerValues.uploadId ?? null;
 	if (res.status === 200 && headerValues.isCallback === "1" && b2Id) {
-		jiraya.schedulePostImageProcess(headerValues, b2Id, foUploadId, extractedMetadata, replace);
+		jiraya.schedulePostImageProcess(headerValues, b2Id, foUploadId, extractedMetadata, replace, traceContext);
 	}
 
 	return {

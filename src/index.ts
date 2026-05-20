@@ -1,4 +1,5 @@
 import * as Sentry from "@sentry/cloudflare";
+import { instrument } from "@microlabs/otel-cf-workers";
 import { withCorsHeaders, handleCorsPreflight } from "./middleware/cors.middleware";
 import { authMiddleware } from "./middleware/auth.middleware";
 import { handleUploadLegacyRoute, handleUploadRoute } from "./routes/upload.routes";
@@ -13,6 +14,8 @@ import { handleDocsOpenApiRoute, handleDocsRoute } from "./routes/docs.routes";
 import { handleDebugSentryRoute } from "./routes/debug.routes";
 import { errorHandler, notFoundHandler, reportErrorToSentry } from "./errors/error-handler";
 import { getSentryOptions } from "./sentry/config";
+import { resolveOtelConfig } from "./otel/config";
+import { flushOtelLogs, initOtelLogs } from "./otel/logs";
 
 const protectedPaths = new Set([
 	"/upload-worker-s3",
@@ -72,7 +75,8 @@ async function routeRequest(request: Request): Promise<Response> {
 }
 
 const worker = {
-	async fetch(request: Request, _env: Env, _ctx: ExecutionContext): Promise<Response> {
+	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+		initOtelLogs(env);
 		try {
 			const preflightResponse = handleCorsPreflight(request);
 			if (preflightResponse) return preflightResponse;
@@ -81,8 +85,13 @@ const worker = {
 		} catch (error) {
 			reportErrorToSentry(error);
 			return withCorsHeaders(errorHandler(error), request);
+		} finally {
+			// Never reject waitUntil: log flush is best-effort (OTLP 5xx must not surface as Uncaught).
+			ctx.waitUntil(flushOtelLogs().catch(() => undefined));
 		}
 	},
 } satisfies ExportedHandler<Env>;
 
-export default Sentry.withSentry((env) => getSentryOptions(env), worker);
+const instrumentedWorker = instrument(worker, resolveOtelConfig);
+
+export default Sentry.withSentry((env) => getSentryOptions(env), instrumentedWorker);

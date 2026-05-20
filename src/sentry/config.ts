@@ -1,6 +1,6 @@
-import * as Sentry from "@sentry/cloudflare";
 import type { CloudflareOptions } from "@sentry/cloudflare";
 
+/** Sentry is used for error monitoring only; traces and logs go to OTEL. */
 export function getSentryOptions(env: Env): CloudflareOptions | undefined {
 	if (!env.SENTRY_DSN) {
 		return undefined;
@@ -11,11 +11,10 @@ export function getSentryOptions(env: Env): CloudflareOptions | undefined {
 		release: env.SENTRY_RELEASE,
 		environment: env.ENV,
 		sendDefaultPii: true,
-		enableLogs: true,
-		tracesSampleRate: env.ENV === "prod" ? 0.1 : 1.0,
-		integrations: (integrations) => [
-			...integrations,
-			Sentry.consoleLoggingIntegration({ levels: ["log", "warn", "error"] }),
-		],
+		enableLogs: false,
+		tracesSampleRate: 0,
+		skipOpenTelemetrySetup: true,
+		integrations: (integrations) =>
+			integrations.filter((integration) => integration.name !== "Console"),
 	};
 }
