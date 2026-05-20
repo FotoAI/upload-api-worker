@@ -1,51 +1,78 @@
-import { httpServerHandler } from "cloudflare:node";
-import express from "express";
-import { corsMiddleware } from "./middleware/cors.middleware";
+import { withCorsHeaders, handleCorsPreflight } from "./middleware/cors.middleware";
 import { authMiddleware } from "./middleware/auth.middleware";
-import { uploadRouter } from "./routes/upload.routes";
-import { multipartRouter } from "./routes/multipart.routes";
-import { publicRouter } from "./routes/public.routes";
-import { docsRouter } from "./routes/docs.routes";
+import { handleUploadLegacyRoute, handleUploadRoute } from "./routes/upload.routes";
+import {
+	handleAbortMultipartRoute,
+	handleCompleteMultipartRoute,
+	handleStartMultipartRoute,
+	handleUploadPartRoute,
+} from "./routes/multipart.routes";
+import { handlePublicFaceRoute } from "./routes/public.routes";
+import { handleDocsOpenApiRoute, handleDocsRoute } from "./routes/docs.routes";
 import { errorHandler, notFoundHandler } from "./errors/error-handler";
 
-const app = express();
+const protectedPaths = new Set([
+	"/upload-worker-s3",
+	"/upload-v3/upload",
+	"/upload-v3/start-multipart",
+	"/upload-v3/upload-part",
+	"/upload-v3/complete-multipart",
+	"/upload-v3/abort-multipart",
+]);
 
-app.disable("x-powered-by");
+async function routeRequest(request: Request): Promise<Response> {
+	const url = new URL(request.url);
+	const path = url.pathname;
 
-// CORS + preflight for all routes
-app.use(corsMiddleware);
+	if (path === "/upload-v3/health" && request.method === "GET") {
+		return Response.json({ ok: true, message: "ok" }, { status: 200 });
+	}
 
-// Health
-app.get("/upload-v3/health", (_req, res) => {
-	res.status(200).json({ ok: true, message: "ok" });
-});
+	if (path === "/upload-v3/docs/openapi.json" && request.method === "GET") {
+		return handleDocsOpenApiRoute(request);
+	}
+	if (path === "/upload-v3/docs" && request.method === "GET") {
+		return handleDocsRoute(request);
+	}
+	if (path === "/upload-v3/face" && request.method === "POST") {
+		return handlePublicFaceRoute(request);
+	}
 
-// Docs (Basic auth inside router)
-app.use(docsRouter);
+	if (protectedPaths.has(path)) {
+		await authMiddleware(request);
+	}
 
-// Public routes
-app.use(publicRouter);
+	if (path === "/upload-v3/upload" && request.method === "POST") {
+		return handleUploadRoute(request);
+	}
+	if (path === "/upload-worker-s3" && request.method === "POST") {
+		return handleUploadLegacyRoute(request);
+	}
+	if (path === "/upload-v3/start-multipart" && request.method === "GET") {
+		return handleStartMultipartRoute(request);
+	}
+	if (path === "/upload-v3/upload-part" && request.method === "POST") {
+		return handleUploadPartRoute(request);
+	}
+	if (path === "/upload-v3/complete-multipart" && request.method === "POST") {
+		return handleCompleteMultipartRoute(request);
+	}
+	if (path === "/upload-v3/abort-multipart" && request.method === "POST") {
+		return handleAbortMultipartRoute(request);
+	}
 
-// Protected routes: auth applies only to selected paths
-const protectedRouter = express.Router();
-protectedRouter.use((req, res, next) => {
-	const p = req.path;
-	const isProtected =
-		p === "/upload-worker-s3" ||
-		p === "/upload-v3/upload" ||
-		p === "/upload-v3/start-multipart" ||
-		p === "/upload-v3/upload-part" ||
-		p === "/upload-v3/complete-multipart" ||
-		p === "/upload-v3/abort-multipart";
-	if (!isProtected) return next();
-	return authMiddleware(req, res, next);
-});
-protectedRouter.use(uploadRouter);
-protectedRouter.use(multipartRouter);
-app.use(protectedRouter);
+	notFoundHandler();
+}
 
-app.use(notFoundHandler);
-app.use(errorHandler);
-
-app.listen(3000);
-export default httpServerHandler({ port: 3000 });
+export default {
+	async fetch(request: Request, _env: unknown, _ctx: ExecutionContext): Promise<Response> {
+		try {
+			const preflightResponse = handleCorsPreflight(request);
+			if (preflightResponse) return preflightResponse;
+			const response = await routeRequest(request);
+			return withCorsHeaders(response, request);
+		} catch (error) {
+			return withCorsHeaders(errorHandler(error), request);
+		}
+	},
+};

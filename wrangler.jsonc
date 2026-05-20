@@ -15,13 +15,20 @@
 	"env": {
 		"dev": {
 			"name": "upload-api-worker-dev",
+			"kv_namespaces": [
+				{
+					"binding": "MULTIPART_UPLOADS_KV",
+					"id": "915fe5d0a2a342baaf7d6f53ed85c286",
+				},
+			],
 			"vars": {
 				"AWS_DEFAULT_REGION": "us-west-000",
 				"AWS_ENDPOINT": "https://fotoowl-dev-bucket-1.s3.us-west-000.backblazeb2.com",
 				"AWS_S3_BUCKET": "fotoowl-dev-bucket-1",
-				"API_HOST": "https://dev-api.fotoowl.ai",
+				"API_HOST": "https://staging-jiraya.fotoowl.ai",
 				"API_USERNAME": "eece118d-83b7-4593-9b5a-481e64cd558d",
 				"DOCS_USERNAME": "fotoowl",
+				"SENTRY_DSN": "https://348f1cb31d3031c537e128d312859f9f@o4511415367434240.ingest.us.sentry.io/4511420593537024",
 			},
 			// Secrets (set via `.dev.vars` for local dev, or `wrangler secret put` for deployed dev):
 			// - AWS_ACCESS_KEY_ID
@@ -31,6 +38,12 @@
 		},
 		"prod": {
 			"name": "upload-api-worker",
+			"kv_namespaces": [
+				{
+					"binding": "MULTIPART_UPLOADS_KV",
+					"id": "REPLACE_WITH_PROD_MULTIPART_UPLOADS_KV_NAMESPACE_ID",
+				},
+			],
 			"vars": {
 				"AWS_DEFAULT_REGION": "us-west-000",
 				"AWS_ACCESS_KEY_ID": "",

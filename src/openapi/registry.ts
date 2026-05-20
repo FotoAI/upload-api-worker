@@ -21,30 +21,28 @@ export const BearerAuth = registry.registerComponent("securitySchemes", "BearerA
 	description: "Bearer token validated against FotoOwl API event-storage-check.",
 });
 
-const Header = (name: string, schema: z.ZodTypeAny, required = false, description?: string) =>
-	z
-		.object({ [name]: schema })
-		.openapi({
-			param: {
-				name,
-				in: "header",
-				required,
-				description,
-			},
-		});
+const headerParam = (name: string, schema: z.ZodTypeAny = z.string(), required = false, description?: string) =>
+	schema.openapi({
+		param: {
+			name,
+			in: "header",
+			required,
+			description,
+		},
+	});
 
 // Common headers (not all are required on all routes, but we document the main set).
-export const FOEventIdHeader = Header("FO-Event-Id", z.string(), true, "Event ID");
-export const AuthorizationHeader = Header("Authorization", z.string(), true, "Bearer token");
-export const XbzFileNameHeader = Header("X-Bz-File-Name", z.string(), true, "Object key/path in bucket");
-export const XbzContentTypeHeader = Header("X-Bz-Content-Type", z.string(), false, "MIME type");
-export const XbzContentSha1Header = Header("X-Bz-Content-Sha1", z.string(), false, "SHA1 of body");
-export const XbzUploadIdHeader = Header("X-Bz-Upload-ID", z.string(), true, "Multipart upload id");
-export const XbzPartNumberHeader = Header("X-Bz-Part-Number", z.string(), true, "1-based part number");
-export const XbzContentLengthHeader = Header("X-Bz-Content-Length", z.string(), false, "Part size in bytes");
-export const ContentMd5Header = Header("Content-MD5", z.string(), false, "MD5 of the part body");
-export const FOCallbackHeader = Header("FO-Callback", z.enum(["0", "1"]), false, "If 1, schedules backend callback");
-export const FOIsGuestUploadHeader = Header(
+export const FOEventIdHeader = headerParam("FO-Event-Id", z.string(), true, "Event ID");
+export const AuthorizationHeader = headerParam("Authorization", z.string(), true, "Bearer token");
+export const XbzFileNameHeader = headerParam("X-Bz-File-Name", z.string(), true, "Object key/path in bucket");
+export const XbzContentTypeHeader = headerParam("X-Bz-Content-Type", z.string(), false, "MIME type");
+export const XbzContentSha1Header = headerParam("X-Bz-Content-Sha1", z.string(), false, "SHA1 of body");
+export const XbzUploadIdHeader = headerParam("X-Bz-Upload-ID", z.string(), true, "Multipart upload id");
+export const XbzPartNumberHeader = headerParam("X-Bz-Part-Number", z.string(), true, "1-based part number");
+export const XbzContentLengthHeader = headerParam("X-Bz-Content-Length", z.string(), false, "Part size in bytes");
+export const ContentMd5Header = headerParam("Content-MD5", z.string(), false, "MD5 of the part body");
+export const FOCallbackHeader = headerParam("FO-Callback", z.enum(["0", "1"]), false, "If 1, schedules backend callback");
+export const FOIsGuestUploadHeader = headerParam(
 	"FO-Is-Guest-Upload",
 	z.string(),
 	false,
@@ -70,10 +68,13 @@ export function registerRoutes() {
 		tags: ["Upload"],
 		security: [{ [BearerAuth.name]: [] }],
 		request: {
-			headers: z.intersection(
-				z.intersection(FOEventIdHeader, AuthorizationHeader),
-				z.intersection(XbzFileNameHeader, z.intersection(XbzContentTypeHeader, XbzContentSha1Header)),
-			),
+			headers: z.object({
+				"FO-Event-Id": FOEventIdHeader,
+				Authorization: AuthorizationHeader,
+				"X-Bz-File-Name": XbzFileNameHeader,
+				"X-Bz-Content-Type": XbzContentTypeHeader,
+				"X-Bz-Content-Sha1": XbzContentSha1Header,
+			}),
 			body: {
 				content: {
 					"application/octet-stream": { schema: z.string().openapi({ format: "binary" }) },
@@ -98,10 +99,13 @@ export function registerRoutes() {
 		tags: ["Multipart"],
 		security: [{ [BearerAuth.name]: [] }],
 		request: {
-			headers: z.intersection(
-				z.intersection(FOEventIdHeader, AuthorizationHeader),
-				z.intersection(XbzFileNameHeader, z.intersection(XbzContentTypeHeader, FOIsGuestUploadHeader)),
-			),
+			headers: z.object({
+				"FO-Event-Id": FOEventIdHeader,
+				Authorization: AuthorizationHeader,
+				"X-Bz-File-Name": XbzFileNameHeader,
+				"X-Bz-Content-Type": XbzContentTypeHeader,
+				"FO-Is-Guest-Upload": FOIsGuestUploadHeader,
+			}),
 		},
 		responses: {
 			200: { description: "Started", content: { "application/json": { schema: StartMultipartResponseSchema } } },
@@ -116,16 +120,15 @@ export function registerRoutes() {
 		tags: ["Multipart"],
 		security: [{ [BearerAuth.name]: [] }],
 		request: {
-			headers: z.intersection(
-				z.intersection(FOEventIdHeader, AuthorizationHeader),
-				z.intersection(
-					XbzFileNameHeader,
-					z.intersection(
-						XbzUploadIdHeader,
-						z.intersection(XbzPartNumberHeader, z.intersection(XbzContentTypeHeader, ContentMd5Header)),
-					),
-				),
-			),
+			headers: z.object({
+				"FO-Event-Id": FOEventIdHeader,
+				Authorization: AuthorizationHeader,
+				"X-Bz-File-Name": XbzFileNameHeader,
+				"X-Bz-Upload-ID": XbzUploadIdHeader,
+				"X-Bz-Part-Number": XbzPartNumberHeader,
+				"X-Bz-Content-Type": XbzContentTypeHeader,
+				"Content-MD5": ContentMd5Header,
+			}),
 			body: {
 				content: {
 					"application/octet-stream": { schema: z.string().openapi({ format: "binary" }) },
@@ -144,10 +147,13 @@ export function registerRoutes() {
 		tags: ["Multipart"],
 		security: [{ [BearerAuth.name]: [] }],
 		request: {
-			headers: z.intersection(
-				z.intersection(FOEventIdHeader, AuthorizationHeader),
-				z.intersection(XbzFileNameHeader, z.intersection(XbzUploadIdHeader, FOCallbackHeader)),
-			),
+			headers: z.object({
+				"FO-Event-Id": FOEventIdHeader,
+				Authorization: AuthorizationHeader,
+				"X-Bz-File-Name": XbzFileNameHeader,
+				"X-Bz-Upload-ID": XbzUploadIdHeader,
+				"FO-Callback": FOCallbackHeader,
+			}),
 			body: { content: { "application/json": { schema: CompleteMultipartBodySchema } } },
 		},
 		responses: {
@@ -161,10 +167,12 @@ export function registerRoutes() {
 		tags: ["Multipart"],
 		security: [{ [BearerAuth.name]: [] }],
 		request: {
-			headers: z.intersection(
-				z.intersection(FOEventIdHeader, AuthorizationHeader),
-				z.intersection(XbzFileNameHeader, XbzUploadIdHeader),
-			),
+			headers: z.object({
+				"FO-Event-Id": FOEventIdHeader,
+				Authorization: AuthorizationHeader,
+				"X-Bz-File-Name": XbzFileNameHeader,
+				"X-Bz-Upload-ID": XbzUploadIdHeader,
+			}),
 		},
 		responses: {
 			200: { description: "Aborted", content: { "application/json": { schema: OkResponseSchema } } },
@@ -176,7 +184,11 @@ export function registerRoutes() {
 		path: "/upload-v3/face",
 		tags: ["Public"],
 		request: {
-			headers: z.intersection(FOEventIdHeader, z.intersection(XbzContentTypeHeader, XbzContentSha1Header)),
+			headers: z.object({
+				"FO-Event-Id": FOEventIdHeader,
+				"X-Bz-Content-Type": XbzContentTypeHeader,
+				"X-Bz-Content-Sha1": XbzContentSha1Header,
+			}),
 			body: { content: { "application/octet-stream": { schema: z.string().openapi({ format: "binary" }) } } },
 		},
 		responses: {

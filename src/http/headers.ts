@@ -1,8 +1,14 @@
 import { z } from "zod";
 import { AppError } from "../errors/app-error";
 
-function getHeader(reqHeaders: Record<string, unknown>, name: string): string | undefined {
-	const v = reqHeaders[name.toLowerCase()];
+type HeaderSource = Headers | Record<string, unknown>;
+
+function getHeader(headers: HeaderSource, name: string): string | undefined {
+	if (headers instanceof Headers) {
+		return headers.get(name) ?? undefined;
+	}
+
+	const v = headers[name.toLowerCase()];
 	if (typeof v === "string") return v;
 	if (Array.isArray(v)) {
 		const first = v[0];
@@ -63,6 +69,7 @@ export const UploadHeadersSchema = z.object({
 	imageSize: z.string().optional(),
 	userId: z.string().optional(),
 	imageName: z.string().optional(),
+	foUploadId: z.string().optional(),
 	imagePath: z.string().optional(),
 	rawPath: z.string().optional(),
 	isCallback: z.enum(["0", "1"]).optional(),
@@ -77,11 +84,9 @@ export const UploadHeadersSchema = z.object({
 
 export type UploadHeaders = z.infer<typeof UploadHeadersSchema>;
 
-export function parseUploadHeadersFromExpress(req: { headers: Record<string, unknown> }): UploadHeaders {
-	const headers = req.headers;
-
+export function parseUploadHeaders(headers: HeaderSource): UploadHeaders {
 	const foCollectionIds = getHeader(headers, "FO-Collection-Ids");
-	let parsedCollectionIds: string[] | undefined;
+	let parsedCollectionIds: string[] = ["-1"];
 	if (foCollectionIds) {
 		try {
 			const json = JSON.parse(foCollectionIds);
@@ -122,6 +127,7 @@ export function parseUploadHeadersFromExpress(req: { headers: Record<string, unk
 		imageSize: getHeader(headers, "FO-Image-Size"),
 		userId: getHeader(headers, "FO-User-Id"),
 		imageName: rawImageName ? safeDecodeURIComponent(rawImageName) : undefined,
+		foUploadId: getHeader(headers, "FO-Upload-Id"),
 		imagePath: rawImagePath ? safeDecodeURIComponent(rawImagePath) : undefined,
 		rawPath: rawRawPath ? safeDecodeURIComponent(rawRawPath) : undefined,
 		isCallback: getHeader(headers, "FO-Callback"),
@@ -151,8 +157,7 @@ export const PublicFaceHeadersSchema = z.object({
 
 export type PublicFaceHeaders = z.infer<typeof PublicFaceHeadersSchema>;
 
-export function parsePublicFaceHeadersFromExpress(req: { headers: Record<string, unknown> }): PublicFaceHeaders {
-	const headers = req.headers;
+export function parsePublicFaceHeaders(headers: HeaderSource): PublicFaceHeaders {
 	const candidate = {
 		eventId: getHeader(headers, "FO-Event-Id"),
 		contentType: getHeader(headers, "X-Bz-Content-Type"),
@@ -166,4 +171,5 @@ export function parsePublicFaceHeadersFromExpress(req: { headers: Record<string,
 	}
 	return parsed.data;
 }
+
 

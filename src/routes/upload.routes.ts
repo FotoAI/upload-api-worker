@@ -1,85 +1,29 @@
-import { Router } from "express";
-import type { Request } from "express";
-import { waitUntil } from "cloudflare:workers";
+import { env, waitUntil } from "cloudflare:workers";
 import { B2Service } from "../services/b2.service";
 import { JirayaService } from "../services/jiraya.service";
 import { ImageMetadataService } from "../services/image-metadata.service";
-import { parseUploadHeadersFromExpress } from "../http/headers";
+import { VideoMetadataService } from "../services/video-metadata.service";
+import { parseUploadHeaders } from "../http/headers";
 import { FileSizeExceededError, isFileSizeExceededError, validateContentLengthHeader } from "../http/stream-size";
 import { AppError } from "../errors/app-error";
-import { nodeReadableToWebStream } from "../utils/node-stream";
+import { requireImageOrVideoContentType } from "../http/content-type";
 
 const MAX_SINGLE_UPLOAD_BYTES = 1024 * 1024 * 30; // 30MB
 
 const b2 = new B2Service();
 const jiraya = new JirayaService();
 const imageMetadata = new ImageMetadataService();
+const videoMetadata = new VideoMetadataService();
 
-function requestHeadersToFetchHeaders(req: Request): Headers {
-	const h = new Headers();
-	for (const [k, v] of Object.entries(req.headers)) {
-		if (v == null) continue;
-		if (Array.isArray(v)) {
-			for (const vv of v) h.append(k, vv);
-		} else {
-			h.set(k, v);
-		}
-	}
-	return h;
-}
-
-export const uploadRouter = Router();
-
-async function readStreamToUint8ArrayWithLimit(
-	stream: ReadableStream<Uint8Array>,
-	maxBytes: number,
-): Promise<Uint8Array> {
-	const reader = stream.getReader();
-	const chunks: Uint8Array[] = [];
-	let total = 0;
-
-	try {
-		while (true) {
-			const { done, value } = await reader.read();
-			if (done) break;
-			if (!value || value.byteLength === 0) continue;
-
-			total += value.byteLength;
-			if (total > maxBytes) {
-				throw new FileSizeExceededError(total, maxBytes);
-			}
-			chunks.push(value);
-		}
-	} finally {
-		try {
-			await reader.cancel();
-		} catch {
-			// ignore
-		}
-	}
-
-	if (chunks.length === 0) return new Uint8Array();
-	if (chunks.length === 1) return chunks[0];
-
-	const out = new Uint8Array(total);
-	let offset = 0;
-	for (const c of chunks) {
-		out.set(c, offset);
-		offset += c.byteLength;
-	}
-	return out;
-}
-
-async function handleUpload(req: Request) {
-	const headerValues = parseUploadHeadersFromExpress(req);
+async function handleUpload(request: Request) {
+	const headerValues = parseUploadHeaders(request.headers);
+	const contentType = requireImageOrVideoContentType(headerValues.contentType);
+	const foUploadId = headerValues.foUploadId ?? crypto.randomUUID();
+	const replace = Boolean(headerValues.foUploadId);
 
 	// Early validation using Content-Length if present
-	const fetchHeaders = requestHeadersToFetchHeaders(req);
-	if (!headerValues.contentType) {
-		throw new AppError("MISSING_HEADER", { details: { header: "X-Bz-Content-Type" } });
-	}
 	try {
-		validateContentLengthHeader(fetchHeaders, MAX_SINGLE_UPLOAD_BYTES);
+		validateContentLengthHeader(request.headers, MAX_SINGLE_UPLOAD_BYTES);
 	} catch (e) {
 		if (isFileSizeExceededError(e)) {
 			throw new AppError("PAYLOAD_TOO_LARGE", { message: e.message, details: { code: "FILE_SIZE_EXCEEDED" } });
@@ -87,34 +31,53 @@ async function handleUpload(req: Request) {
 	}
 
 	let res: Response;
+	let extractedMetadata: Record<string, unknown> | undefined;
 	try {
-		const nodeStream = req as unknown as import("node:stream").Readable;
-
-		const webStream = nodeReadableToWebStream(nodeStream);
+		const webStream = request.body ?? new ReadableStream<Uint8Array>();
 		let uploadStream = webStream;
 		const requestId = crypto.randomUUID();
+		let imageMetadataPromise: Promise<import("../services/image-metadata.service").ExtractImageMetadataResult> | undefined;
+		let videoMetadataPromise: Promise<import("../services/video-metadata.service").ExtractVideoMetadataResult> | undefined;
 
-		if (imageMetadata.shouldExtractForContentType(headerValues.contentType)) {
+		if (imageMetadata.shouldExtractForContentType(contentType)) {
 			const [uploadBranch, metadataStream] = webStream.tee();
 			uploadStream = uploadBranch;
+			imageMetadataPromise = imageMetadata.extractFromStream({
+				stream: metadataStream,
+				contentType,
+				imageName: headerValues.imageName,
+				requestId,
+			});
+		}
+		if (videoMetadata.shouldExtractForContentType(contentType)) {
+			const [uploadBranch, metadataStream] = webStream.tee();
+			uploadStream = uploadBranch;
+			videoMetadataPromise = videoMetadata.extractFromStream({
+				stream: metadataStream,
+				contentType,
+				imageName: headerValues.imageName,
+				requestId,
+			});
+		}
+
+		// const bodyBytes = await readStreamToUint8ArrayWithLimit(uploadStream, MAX_SINGLE_UPLOAD_BYTES);
+		res = await b2.upload(uploadStream, headerValues.bucketKey, contentType, headerValues.sha1);
+		if (imageMetadataPromise) {
 			waitUntil(
-				imageMetadata
-					.extractFromStream({
-						stream: metadataStream,
-						contentType: headerValues.contentType,
-						imageName: headerValues.imageName,
-						requestId,
-					})
+				imageMetadataPromise
 					.then((result) => {
 						if (result.ok) {
-							console.log("[ImageMetadataService] extracted metadata", {
-								requestId,
+							extractedMetadata = {
 								parser: result.parser,
 								bytesRead: result.bytesRead,
 								truncated: result.truncated,
 								imageName: result.imageName,
 								contentType: result.contentType,
 								tags: result.tags,
+							};
+							console.log("[ImageMetadataService] extracted metadata", {
+								requestId,
+								...extractedMetadata,
 							});
 							return;
 						}
@@ -130,10 +93,71 @@ async function handleUpload(req: Request) {
 					})
 					.catch(() => undefined),
 			);
+			const metadataResult = await imageMetadataPromise.catch(() => undefined);
+			if (metadataResult?.ok) {
+				extractedMetadata = {
+					parser: metadataResult.parser,
+					bytesRead: metadataResult.bytesRead,
+					truncated: metadataResult.truncated,
+					imageName: metadataResult.imageName,
+					contentType: metadataResult.contentType,
+					tags: metadataResult.tags,
+				};
+			}
 		}
-
-		const bodyBytes = await readStreamToUint8ArrayWithLimit(uploadStream, MAX_SINGLE_UPLOAD_BYTES);
-		res = await b2.upload(bodyBytes, headerValues.bucketKey, headerValues.contentType, headerValues.sha1);
+		if (videoMetadataPromise) {
+			let resolvedVideoMetadata = await videoMetadataPromise.catch(() => undefined);
+			if (!resolvedVideoMetadata?.ok) {
+				const objectUrl = `${env.AWS_ENDPOINT as string}/${headerValues.bucketKey}`;
+				resolvedVideoMetadata = await videoMetadata
+					.extractFromUrl({
+						url: objectUrl,
+						contentType,
+						imageName: headerValues.imageName,
+						requestId,
+					})
+					.catch(() => undefined);
+			}
+			waitUntil(
+				Promise.resolve(resolvedVideoMetadata)
+					.then((result) => {
+						if (!result) return;
+						if (result.ok) {
+							extractedMetadata = {
+								parser: result.parser,
+								bytesRead: result.bytesRead,
+								imageName: result.imageName,
+								contentType: result.contentType,
+								tags: result.tags,
+							};
+							console.log("[VideoMetadataService] extracted metadata", {
+								requestId,
+								...extractedMetadata,
+							});
+							return;
+						}
+						console.log("[VideoMetadataService] failed metadata extraction", {
+							requestId,
+							parser: result.parser,
+							bytesRead: result.bytesRead,
+							imageName: result.imageName,
+							contentType: result.contentType,
+							error: result.error,
+						});
+					})
+					.catch(() => undefined),
+			);
+			const metadataResult = resolvedVideoMetadata;
+			if (metadataResult?.ok) {
+				extractedMetadata = {
+					parser: metadataResult.parser,
+					bytesRead: metadataResult.bytesRead,
+					imageName: metadataResult.imageName,
+					contentType: metadataResult.contentType,
+					tags: metadataResult.tags,
+				};
+			}
+		}
 	} catch (e) {
 		console.error("[UploadRoutes] handleUpload error", { error: e });
 		const isSizeError = isFileSizeExceededError(e);
@@ -159,7 +183,7 @@ async function handleUpload(req: Request) {
 
 	const b2Id = res.headers.get("x-amz-version-id") ?? headerValues.uploadId ?? null;
 	if (res.status === 200 && headerValues.isCallback === "1" && b2Id) {
-		jiraya.schedulePostImageProcess(headerValues, b2Id);
+		jiraya.schedulePostImageProcess(headerValues, b2Id, foUploadId, extractedMetadata, replace);
 	}
 
 	return {
@@ -172,27 +196,18 @@ async function handleUpload(req: Request) {
 			width: headerValues.imageWidth,
 			sha: headerValues.sha1,
 			b2Id: b2Id ?? undefined,
-			partNum: headerValues.partNumber,
+			fo_upload_id: foUploadId,
 		},
 	};
 }
 
-uploadRouter.post("/upload-v3/upload", async (req, res, next) => {
-	try {
-		const body = await handleUpload(req);
-		res.status(200).json(body);
-	} catch (e) {
-		next(e);
-	}
-});
+export async function handleUploadRoute(request: Request): Promise<Response> {
+	const body = await handleUpload(request);
+	return Response.json(body, { status: 200 });
+}
 
-// legacy alias still supported for now
-uploadRouter.post("/upload-worker-s3", async (req, res, next) => {
-	try {
-		const body = await handleUpload(req);
-		res.status(200).json(body);
-	} catch (e) {
-		next(e);
-	}
-});
+export async function handleUploadLegacyRoute(request: Request): Promise<Response> {
+	const body = await handleUpload(request);
+	return Response.json(body, { status: 200 });
+}
 

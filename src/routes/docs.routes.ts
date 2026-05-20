@@ -1,7 +1,5 @@
-import { Router } from "express";
 import { env } from "cloudflare:workers";
 import { buildOpenApiSpec } from "../openapi/build-spec";
-import { AppError } from "../errors/app-error";
 
 async function timingSafeEqualUtf8(a: string, b: string) {
 	const enc = new TextEncoder();
@@ -61,51 +59,50 @@ function swaggerUiHtml(openapiAbsoluteUrl: string) {
 </html>`;
 }
 
-export const docsRouter = Router();
+function buildOriginFromRequest(request: Request): string {
+	const url = new URL(request.url);
+	return `${url.protocol}//${url.host}`;
+}
 
-docsRouter.get("/upload-v3/docs/openapi.json", async (req, res, next) => {
-	try {
-		const auth = await verifyDocsBasicAuth(req.header("Authorization") ?? undefined);
-		if (!auth.ok) {
-			if (auth.reason === "not_configured") {
-				return res
-					.status(503)
-					.type("text/plain")
-					.send("Documentation is not configured. Set DOCS_USERNAME and DOCS_PASSWORD.");
-			}
-			res.setHeader("WWW-Authenticate", 'Basic realm="Upload API Docs"');
-			return res.status(401).type("text/plain").send("Unauthorized");
-		}
-
-		const origin = `${req.protocol}://${req.get("host")}`;
-		const spec = buildOpenApiSpec(origin);
-		res.setHeader("Cache-Control", "no-store");
-		res.json(spec);
-	} catch (e) {
-		next(e);
+function buildUnauthorizedResponse(status: number, message: string, includeAuthHeader = false): Response {
+	const headers = new Headers({ "Content-Type": "text/plain;charset=UTF-8" });
+	if (includeAuthHeader) {
+		headers.set("WWW-Authenticate", 'Basic realm="Upload API Docs"');
 	}
-});
+	return new Response(message, { status, headers });
+}
 
-docsRouter.get("/upload-v3/docs", async (req, res, next) => {
-	try {
-		const auth = await verifyDocsBasicAuth(req.header("Authorization") ?? undefined);
-		if (!auth.ok) {
-			if (auth.reason === "not_configured") {
-				return res
-					.status(503)
-					.type("text/plain")
-					.send("Documentation is not configured. Set DOCS_USERNAME and DOCS_PASSWORD.");
-			}
-			res.setHeader("WWW-Authenticate", 'Basic realm="Upload API Docs"');
-			return res.status(401).type("text/plain").send("Unauthorized");
+export async function handleDocsOpenApiRoute(request: Request): Promise<Response> {
+	const auth = await verifyDocsBasicAuth(request.headers.get("Authorization") ?? undefined);
+	if (!auth.ok) {
+		if (auth.reason === "not_configured") {
+			return buildUnauthorizedResponse(503, "Documentation is not configured. Set DOCS_USERNAME and DOCS_PASSWORD.");
 		}
-
-		const origin = `${req.protocol}://${req.get("host")}`;
-		const openapiUrl = `${origin}/upload-v3/docs/openapi.json`;
-		res.setHeader("Cache-Control", "no-store");
-		res.status(200).type("text/html").send(swaggerUiHtml(openapiUrl));
-	} catch (e) {
-		next(e);
+		return buildUnauthorizedResponse(401, "Unauthorized", true);
 	}
-});
+
+	const origin = buildOriginFromRequest(request);
+	const spec = buildOpenApiSpec(origin);
+	return Response.json(spec, { status: 200, headers: { "Cache-Control": "no-store" } });
+}
+
+export async function handleDocsRoute(request: Request): Promise<Response> {
+	const auth = await verifyDocsBasicAuth(request.headers.get("Authorization") ?? undefined);
+	if (!auth.ok) {
+		if (auth.reason === "not_configured") {
+			return buildUnauthorizedResponse(503, "Documentation is not configured. Set DOCS_USERNAME and DOCS_PASSWORD.");
+		}
+		return buildUnauthorizedResponse(401, "Unauthorized", true);
+	}
+
+	const origin = buildOriginFromRequest(request);
+	const openapiUrl = `${origin}/upload-v3/docs/openapi.json`;
+	return new Response(swaggerUiHtml(openapiUrl), {
+		status: 200,
+		headers: {
+			"Cache-Control": "no-store",
+			"Content-Type": "text/html;charset=UTF-8",
+		},
+	});
+}
 

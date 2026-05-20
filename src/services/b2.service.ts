@@ -103,6 +103,28 @@ export class B2Service {
 			`${this.endpoint}/${key}?partNumber=${encodeURIComponent(partNumber)}&uploadId=${encodeURIComponent(uploadId)}`,
 			{ method: "PUT", body, headers: requestHeaders },
 		);
+		if (!response.ok) {
+			const bodyText = await response.text();
+			if (response.status === 404) {
+				throw new AppError("MULTIPART_UPLOAD_NOT_FOUND", {
+					message: "Multipart upload session not found. Start multipart upload again and retry.",
+					details: {
+						status: response.status,
+						uploadId,
+						partNumber,
+						body: bodyText.slice(0, 2000),
+					},
+				});
+			}
+			throw new AppError("UPSTREAM_B2_FAILED", {
+				details: {
+					status: response.status,
+					uploadId,
+					partNumber,
+					body: bodyText.slice(0, 2000),
+				},
+			});
+		}
 
 		return {
 			etag: response.headers.get("ETag"),

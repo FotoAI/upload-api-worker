@@ -17,18 +17,32 @@ export class JirayaService {
 		this.headers.append("Content-Type", "application/json");
 	}
 
-	schedulePostImageProcess(headerValues: UploadHeaders, b2Id: string) {
-		waitUntil(this.postImageProcess(headerValues, b2Id).catch(() => undefined));
+	schedulePostImageProcess(
+		headerValues: UploadHeaders,
+		b2Id: string,
+		foUploadId?: string,
+		metadata?: Record<string, unknown>,
+		replace?: boolean,
+	) {
+		waitUntil(this.postImageProcess(headerValues, b2Id, foUploadId, metadata, replace).catch(() => undefined));
 	}
 
 	scheduleDeleteImage(headerValues: UploadHeaders) {
 		waitUntil(this.deleteImage(headerValues).catch(() => undefined));
 	}
 
-	async postImageProcess(headerValues: UploadHeaders, b2Id: string): Promise<Response> {
+	async postImageProcess(
+		headerValues: UploadHeaders,
+		b2Id: string,
+		foUploadId?: string,
+		metadata?: Record<string, unknown>,
+		replace?: boolean,
+	): Promise<Response> {
 		const url = `${this.endpoint}/internal/event/picture/process`;
 		const body = JSON.stringify({
 			b2_id: b2Id,
+			upload_id: foUploadId,
+			replace_image: replace,
 			mime_type: headerValues.contentType,
 			event_id: headerValues.eventId,
 			collection_id: headerValues.collectionId,
@@ -45,6 +59,12 @@ export class JirayaService {
 			collection_ids: headerValues.collectionIds,
 			guest_upload: headerValues.isGuestUpload,
 			compression_factor: headerValues.isCompression ? headerValues.compressionFactor : undefined,
+			metadata: metadata?.tags
+
+		});
+
+		console.log("[JirayaService] postImageProcess body", {
+			body,
 		});
 
 		const res = await retryWithExponentialBackoff(

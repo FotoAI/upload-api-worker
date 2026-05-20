@@ -135,7 +135,7 @@ export class ImageMetadataService {
 			const exifInput = buffered.buffer.slice(buffered.byteOffset, buffered.byteOffset + buffered.byteLength);
 			const tags = (await ExifReader.load(exifInput, {
 				async: true,
-				expanded: true,
+				expanded: false,
 				domParser: new DOMParser({ onError: onErrorStopParsing }),
 				excludeTags: { thumbnail: true },
 			})) as Record<string, unknown>;

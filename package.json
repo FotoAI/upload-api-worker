@@ -19,11 +19,11 @@
   },
   "dependencies": {
     "@asteasolutions/zod-to-openapi": "^8.5.0",
-    "@types/express": "^5.0.6",
+    "@sentry/cloudflare": "^10.53.1",
     "@xmldom/xmldom": "github:xmldom/xmldom",
     "aws4fetch": "^1.0.20",
     "exifreader": "^4.38.1",
-    "express": "^5.2.1",
+    "mediabunny": "^1.24.2",
     "xml2js": "^0.6.2",
     "zod": "^4.3.6"
   }

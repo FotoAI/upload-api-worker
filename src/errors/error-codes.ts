@@ -2,9 +2,11 @@ export type ErrorCode =
 	| "UNAUTHORIZED"
 	| "MISSING_HEADER"
 	| "INVALID_HEADER"
+	| "INVALID_CONTENT_TYPE"
 	| "INVALID_JSON"
 	| "PAYLOAD_TOO_LARGE"
 	| "PART_LIMIT_EXCEEDED"
+	| "MULTIPART_UPLOAD_NOT_FOUND"
 	| "UPSTREAM_AUTH_FAILED"
 	| "UPSTREAM_B2_FAILED"
 	| "UPSTREAM_JIRAYA_FAILED"
@@ -34,6 +36,11 @@ export const ERROR_CODES: Record<ErrorCode, ErrorCodeMeta> = {
 		publicMessage: "Invalid header",
 		meaning: "A provided HTTP header is malformed or cannot be parsed/decoded.",
 	},
+	INVALID_CONTENT_TYPE: {
+		httpStatus: 400,
+		publicMessage: "Invalid content type",
+		meaning: "Content type is unsupported for this endpoint.",
+	},
 	INVALID_JSON: {
 		httpStatus: 400,
 		publicMessage: "Invalid JSON",
@@ -48,6 +55,11 @@ export const ERROR_CODES: Record<ErrorCode, ErrorCodeMeta> = {
 		httpStatus: 413,
 		publicMessage: "Part limit exceeded",
 		meaning: "Multipart upload part number exceeds the allowed maximum for the content type.",
+	},
+	MULTIPART_UPLOAD_NOT_FOUND: {
+		httpStatus: 404,
+		publicMessage: "Multipart upload session not found",
+		meaning: "Multipart upload session was not started, has expired, or was already completed/aborted.",
 	},
 	UPSTREAM_AUTH_FAILED: {
 		httpStatus: 502,

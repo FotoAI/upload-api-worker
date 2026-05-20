@@ -1,4 +1,3 @@
-import type { NextFunction, Request, Response } from "express";
 import { ERROR_CODES } from "./error-codes";
 import { AppError, isAppError } from "./app-error";
 
@@ -9,7 +8,7 @@ export type ErrorResponse = {
 	details?: Record<string, unknown>;
 };
 
-function toErrorResponse(err: unknown): { status: number; body: ErrorResponse } {
+export function toErrorResponse(err: unknown): { status: number; body: ErrorResponse } {
 	if (isAppError(err)) {
 		return {
 			status: err.status,
@@ -22,7 +21,6 @@ function toErrorResponse(err: unknown): { status: number; body: ErrorResponse } 
 		};
 	}
 
-	// Express can throw syntax errors for JSON parsing etc.
 	if (err instanceof SyntaxError) {
 		const meta = ERROR_CODES.INVALID_JSON;
 		return {
@@ -38,12 +36,11 @@ function toErrorResponse(err: unknown): { status: number; body: ErrorResponse } 
 	};
 }
 
-export function notFoundHandler(_req: Request, _res: Response, next: NextFunction) {
-	next(new AppError("NOT_FOUND"));
+export function notFoundHandler(): never {
+	throw new AppError("NOT_FOUND");
 }
 
-export function errorHandler(err: unknown, _req: Request, res: Response, _next: NextFunction) {
+export function errorHandler(err: unknown): Response {
 	const { status, body } = toErrorResponse(err);
-	res.status(status).json(body);
+	return Response.json(body, { status });
 }
-
