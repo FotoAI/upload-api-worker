@@ -1,5 +1,14 @@
+import * as Sentry from "@sentry/cloudflare";
 import { ERROR_CODES } from "./error-codes";
 import { AppError, isAppError } from "./app-error";
+
+/** Reports server-side failures to Sentry; skips expected client errors (4xx). */
+export function reportErrorToSentry(err: unknown): void {
+	if (isAppError(err) && err.status < 500) {
+		return;
+	}
+	Sentry.captureException(err);
+}
 
 export type ErrorResponse = {
 	ok: false;

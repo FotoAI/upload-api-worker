@@ -1,3 +1,4 @@
+import * as Sentry from "@sentry/cloudflare";
 import { withCorsHeaders, handleCorsPreflight } from "./middleware/cors.middleware";
 import { authMiddleware } from "./middleware/auth.middleware";
 import { handleUploadLegacyRoute, handleUploadRoute } from "./routes/upload.routes";
@@ -9,7 +10,9 @@ import {
 } from "./routes/multipart.routes";
 import { handlePublicFaceRoute } from "./routes/public.routes";
 import { handleDocsOpenApiRoute, handleDocsRoute } from "./routes/docs.routes";
-import { errorHandler, notFoundHandler } from "./errors/error-handler";
+import { handleDebugSentryRoute } from "./routes/debug.routes";
+import { errorHandler, notFoundHandler, reportErrorToSentry } from "./errors/error-handler";
+import { getSentryOptions } from "./sentry/config";
 
 const protectedPaths = new Set([
 	"/upload-worker-s3",
@@ -26,6 +29,10 @@ async function routeRequest(request: Request): Promise<Response> {
 
 	if (path === "/upload-v3/health" && request.method === "GET") {
 		return Response.json({ ok: true, message: "ok" }, { status: 200 });
+	}
+
+	if (path === "/upload-v3/debug-sentry" && request.method === "GET") {
+		return handleDebugSentryRoute(request);
 	}
 
 	if (path === "/upload-v3/docs/openapi.json" && request.method === "GET") {
@@ -64,15 +71,18 @@ async function routeRequest(request: Request): Promise<Response> {
 	notFoundHandler();
 }
 
-export default {
-	async fetch(request: Request, _env: unknown, _ctx: ExecutionContext): Promise<Response> {
+const worker = {
+	async fetch(request: Request, _env: Env, _ctx: ExecutionContext): Promise<Response> {
 		try {
 			const preflightResponse = handleCorsPreflight(request);
 			if (preflightResponse) return preflightResponse;
 			const response = await routeRequest(request);
 			return withCorsHeaders(response, request);
 		} catch (error) {
+			reportErrorToSentry(error);
 			return withCorsHeaders(errorHandler(error), request);
 		}
 	},
-};
+} satisfies ExportedHandler<Env>;
+
+export default Sentry.withSentry((env) => getSentryOptions(env), worker);

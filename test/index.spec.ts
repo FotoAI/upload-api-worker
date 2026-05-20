@@ -11,19 +11,22 @@ import worker from "../src/index";
 // `Request` to pass to `worker.fetch()`.
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
 
-describe("Hello World worker", () => {
-	it("responds with Hello World! (unit style)", async () => {
-		const request = new IncomingRequest("http://example.com");
-		// Create an empty context to pass to `worker.fetch()`.
+describe("upload-api-worker", () => {
+	it("health check (unit style)", async () => {
+		const request = new IncomingRequest("http://example.com/upload-v3/health");
 		const ctx = createExecutionContext();
 		const response = await worker.fetch(request, env, ctx);
-		// Wait for all `Promise`s passed to `ctx.waitUntil()` to settle before running test assertions
 		await waitOnExecutionContext(ctx);
-		expect(await response.text()).toMatchInlineSnapshot(`"Hello World!"`);
+		const body = (await response.json()) as { ok: boolean; message: string };
+		expect(response.status).toBe(200);
+		expect(body.ok).toBe(true);
+		expect(body.message).toBe("ok");
 	});
 
-	it("responds with Hello World! (integration style)", async () => {
-		const response = await SELF.fetch("https://example.com");
-		expect(await response.text()).toMatchInlineSnapshot(`"Hello World!"`);
+	it("health check (integration style)", async () => {
+		const response = await SELF.fetch("https://example.com/upload-v3/health");
+		const body = (await response.json()) as { ok: boolean; message: string };
+		expect(response.status).toBe(200);
+		expect(body.ok).toBe(true);
 	});
 });

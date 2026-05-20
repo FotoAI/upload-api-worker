@@ -167,3 +167,5 @@ dist
 .wrangler/
 
 .pnpm-store/
+# Sentry Config File
+.sentryclirc

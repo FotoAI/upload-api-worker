@@ -1,30 +1,34 @@
 {
-  "name": "upload-api-worker",
-  "version": "0.0.0",
-  "private": true,
-  "scripts": {
-    "deploy": "wrangler deploy",
-    "dev": "wrangler dev",
-    "start": "wrangler dev",
-    "test": "vitest",
-    "cf-typegen": "wrangler types"
-  },
-  "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.12.4",
-    "@types/node": "^25.6.0",
-    "@types/xml2js": "^0.4.14",
-    "typescript": "^5.5.2",
-    "vitest": "~3.2.0",
-    "wrangler": "^4.83.0"
-  },
-  "dependencies": {
-    "@asteasolutions/zod-to-openapi": "^8.5.0",
-    "@sentry/cloudflare": "^10.53.1",
-    "@xmldom/xmldom": "github:xmldom/xmldom",
-    "aws4fetch": "^1.0.20",
-    "exifreader": "^4.38.1",
-    "mediabunny": "^1.24.2",
-    "xml2js": "^0.6.2",
-    "zod": "^4.3.6"
-  }
+	"name": "upload-api-worker",
+	"version": "0.0.0",
+	"private": true,
+	"scripts": {
+		"deploy": "wrangler deploy --outdir dist --upload-source-maps --var SENTRY_RELEASE:$(sentry-cli releases propose-version)",
+		"deploy:dev": "wrangler deploy -e dev --outdir dist --upload-source-maps --var SENTRY_RELEASE:$(sentry-cli releases propose-version)",
+		"dev": "wrangler dev",
+		"start": "wrangler dev",
+		"test": "vitest",
+		"cf-typegen": "wrangler types",
+		"sentry:sourcemaps": "_SENTRY_RELEASE=$(sentry-cli releases propose-version) && sentry-cli releases new $_SENTRY_RELEASE --org=fotoowlai --project=upload-worker && sentry-cli sourcemaps upload --org=fotoowlai --project=upload-worker --release=$_SENTRY_RELEASE --strip-prefix 'dist/..' dist",
+		"postdeploy": "pnpm sentry:sourcemaps"
+	},
+	"devDependencies": {
+		"@cloudflare/vitest-pool-workers": "^0.12.4",
+		"@sentry/cli": "^2.58.5",
+		"@types/node": "^25.6.0",
+		"@types/xml2js": "^0.4.14",
+		"typescript": "^5.5.2",
+		"vitest": "~3.2.0",
+		"wrangler": "^4.83.0"
+	},
+	"dependencies": {
+		"@asteasolutions/zod-to-openapi": "^8.5.0",
+		"@sentry/cloudflare": "^10.53.1",
+		"@xmldom/xmldom": "github:xmldom/xmldom",
+		"aws4fetch": "^1.0.20",
+		"exifreader": "^4.38.1",
+		"mediabunny": "^1.24.2",
+		"xml2js": "^0.6.2",
+		"zod": "^4.3.6"
+	}
 }
