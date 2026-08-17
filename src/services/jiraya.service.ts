@@ -28,12 +28,11 @@ export class JirayaService {
 		headerValues: UploadHeaders,
 		b2Id: string,
 		foUploadId?: string,
-		metadata?: Record<string, unknown>,
 		replace?: boolean,
 		traceContext?: TraceContextHeaders,
 	) {
 		waitUntil(
-			this.postImageProcess(headerValues, b2Id, foUploadId, metadata, replace, traceContext).catch((e) => {
+			this.postImageProcess(headerValues, b2Id, foUploadId, replace, traceContext).catch((e) => {
 				console.error("[JirayaService] postImageProcess failed:", e);
 				return undefined;
 			}),
@@ -48,7 +47,6 @@ export class JirayaService {
 		headerValues: UploadHeaders,
 		b2Id: string,
 		foUploadId?: string,
-		metadata?: Record<string, unknown>,
 		replace?: boolean,
 		traceContext?: TraceContextHeaders,
 	): Promise<Response> {
@@ -73,8 +71,6 @@ export class JirayaService {
 			collection_ids: headerValues.collectionIds,
 			guest_upload: headerValues.isGuestUpload,
 			compression_factor: headerValues.isCompression ? headerValues.compressionFactor : undefined,
-			// metadata: metadata?.tags
-
 		});
 
 		console.log("[JirayaService] postImageProcess body", {

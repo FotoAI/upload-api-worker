@@ -4,8 +4,7 @@ import { NoopSpanExporter } from "./noop-exporter";
 
 /** `OTEL_DISABLE_TRACES=true` / `1` / `yes` (case-insensitive). Empty or unset = traces not disabled by this flag. */
 function isOtelTracesDisabled(value: string | undefined): boolean {
-	if (value == null) return false;
-	const v = value.trim().toLowerCase();
+	const v = value?.trim().toLowerCase() ?? "";
 	return v === "true" || v === "1" || v === "yes";
 }
 

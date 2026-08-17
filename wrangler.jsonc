@@ -56,7 +56,7 @@
 				"AWS_DEFAULT_REGION": "us-west-000",
 				"AWS_ENDPOINT": "https://fotoowl-dev-bucket-1.s3.us-west-000.backblazeb2.com",
 				"AWS_S3_BUCKET": "fotoowl-dev-bucket-1",
-				"API_HOST": "https://staging-jiraya.fotoowl.ai",
+				"API_HOST": "https://staging-jiraya-v2.fotoowl.ai",
 				"API_USERNAME": "eece118d-83b7-4593-9b5a-481e64cd558d",
 				"DOCS_USERNAME": "fotoowl",
 				"SENTRY_DSN": "https://348f1cb31d3031c537e128d312859f9f@o4511415367434240.ingest.us.sentry.io/4511420593537024",
@@ -65,7 +65,7 @@
 				"OTEL_EXPORTER_OTLP_LOGS_ENDPOINT": "https://otel-staging.fotoowl.ai/v1/logs",
 				"OTEL_SERVICE_NAME": "upload-worker",
 				"APP_OTEL_DEBUG": "true",
-				"OTEL_DISABLE_TRACES": "true",
+				"OTEL_DISABLE_TRACES": "false",
 			},
 			// Secrets (set via `.dev.vars` for local dev, or `wrangler secret put` for deployed dev):
 			// - AWS_ACCESS_KEY_ID

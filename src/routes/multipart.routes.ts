@@ -1,15 +1,9 @@
 import { env, waitUntil } from "cloudflare:workers";
 import { B2Service } from "../services/b2.service";
 import { JirayaService } from "../services/jiraya.service";
-import { ImageMetadataService } from "../services/image-metadata.service";
-import { VideoMetadataService } from "../services/video-metadata.service";
 import { parseUploadHeaders } from "../http/headers";
-import {
-	FileSizeExceededError,
-	isFileSizeExceededError,
-	validateContentLengthHeader,
-} from "../http/stream-size";
-import { AppError, isAppError } from "../errors/app-error";
+import { FileSizeExceededError, validateContentLengthHeader } from "../http/stream-size";
+import { AppError } from "../errors/app-error";
 import { CompleteMultipartBodySchema } from "../http/schemas";
 import { requireImageOrVideoContentType } from "../http/content-type";
 
@@ -23,8 +17,6 @@ function maxBytesForMultipartPart(contentType: string): number {
 
 const b2 = new B2Service();
 const jiraya = new JirayaService();
-const imageMetadata = new ImageMetadataService();
-const videoMetadata = new VideoMetadataService();
 const MULTIPART_KV_TTL_SECONDS = 60 * 60 * 24; // 24 hours
 
 function getTraceContextHeaders(request: Request) {
@@ -38,7 +30,6 @@ function getTraceContextHeaders(request: Request) {
 
 type MultipartUploadKvValue = {
 	fo_upload_id: string;
-	metadata?: Record<string, unknown>;
 	content_type?: string;
 	bucket_key?: string;
 	replace?: boolean;
@@ -67,17 +58,6 @@ async function getMultipartKv(uploadId: string): Promise<MultipartUploadKvValue 
 		return null;
 	}
 }
-
-function logMultipartMetadataSeam(headerValues: ReturnType<typeof parseUploadHeaders>) {
-	if (!imageMetadata.shouldExtractForContentType(headerValues.contentType)) return;
-	console.log("[ImageMetadataService] multipart metadata extraction placeholder", {
-		uploadId: headerValues.uploadId,
-		bucketKey: headerValues.bucketKey,
-		imageName: headerValues.imageName,
-		contentType: headerValues.contentType,
-	});
-}
-
 
 export async function handleStartMultipartRoute(request: Request): Promise<Response> {
 	const h = parseUploadHeaders(request.headers);
@@ -111,7 +91,6 @@ export async function handleUploadPartRoute(request: Request): Promise<Response>
 		const h = parseUploadHeaders(request.headers);
 		if (!h.uploadId) throw new AppError("MISSING_HEADER", { details: { header: "X-Bz-Upload-ID" } });
 		if (!h.partNumber) throw new AppError("MISSING_HEADER", { details: { header: "X-Bz-Part-Number" } });
-		const uploadId = h.uploadId;
 
 		const partNumberInt = Number.parseInt(h.partNumber, 10);
 		const contentType = requireImageOrVideoContentType(h.contentType);
@@ -135,124 +114,25 @@ export async function handleUploadPartRoute(request: Request): Promise<Response>
 			throw e;
 		}
 
-		const body = request.body ?? new ReadableStream<Uint8Array>();
-		let uploadStream = body;
-		const shouldExtractPartOneImageMetadata =
-			h.partNumber === "1" && imageMetadata.shouldExtractForContentType(contentType);
-		const shouldExtractPartOneVideoMetadata = h.partNumber === "1" && contentType.startsWith("video/");
-		if (shouldExtractPartOneImageMetadata) {
-			const [uploadBranch, metadataStream] = body.tee();
-			uploadStream = uploadBranch;
-			const requestId = crypto.randomUUID();
-			waitUntil(
-				imageMetadata
-					.extractFromStream({
-						stream: metadataStream,
-						contentType,
-						imageName: h.imageName,
-						requestId,
-					})
-					.then((result) => {
-						if (result.ok) {
-							const metadataPayload = {
-								parser: result.parser,
-								bytesRead: result.bytesRead,
-								truncated: result.truncated,
-								imageName: result.imageName,
-								contentType: result.contentType,
-								tags: result.tags,
-							};
-							waitUntil(
-								getMultipartKv(uploadId)
-									.then((existing) => {
-										if (!existing) return;
-										return putMultipartKv(uploadId, {
-											...existing,
-											metadata: metadataPayload,
-											updated_at: new Date().toISOString(),
-										});
-									})
-									.catch(() => undefined),
-							);
-							console.log("[ImageMetadataService] extracted multipart part 1 metadata", {
-								requestId,
-								uploadId: h.uploadId,
-								partNumber: h.partNumber,
-								parser: result.parser,
-								bytesRead: result.bytesRead,
-								truncated: result.truncated,
-								imageName: result.imageName,
-								contentType: result.contentType,
-								tags: result.tags,
-							});
-							return;
-						}
-						console.log("[ImageMetadataService] failed multipart part 1 metadata extraction", {
-							requestId,
-							uploadId: h.uploadId,
-							partNumber: h.partNumber,
-							parser: result.parser,
-							bytesRead: result.bytesRead,
-							truncated: result.truncated,
-							imageName: result.imageName,
-							contentType: result.contentType,
-							error: result.error,
-						});
-					})
-					.catch(() => undefined),
-			);
+		if (!request.body) {
+			throw new AppError("INTERNAL_ERROR", { message: "Request body is required" });
 		}
-		// Attempt video metadata extraction from part 1 when parsable.
-		// If part 1 does not contain enough container metadata, callback proceeds without metadata.
-		if (shouldExtractPartOneVideoMetadata) {
-			const [uploadBranch, metadataStream] = body.tee();
-			uploadStream = uploadBranch;
-			const requestId = crypto.randomUUID();
-			waitUntil(
-				videoMetadata
-					.extractFromStream({
-					stream: metadataStream,
-					contentType,
-					imageName: h.imageName,
-					requestId,
-				})
-					.then((result) => {
-						if (!result.ok) return;
-						const metadataPayload = {
-							parser: result.parser,
-							bytesRead: result.bytesRead,
-							imageName: result.imageName,
-							contentType: result.contentType,
-							tags: result.tags,
-						};
-						return getMultipartKv(uploadId)
-							.then((existing) => {
-								if (!existing) return;
-								return putMultipartKv(uploadId, {
-									...existing,
-									metadata: metadataPayload,
-									updated_at: new Date().toISOString(),
-								});
-							})
-							.catch(() => undefined);
-					})
-					.catch(() => undefined),
-			);
-		}
-		// const body = await readStreamToUint8ArrayWithLimit(request.body ?? new ReadableStream<Uint8Array>(), partMax);
-		const response = await b2.uploadPart(uploadStream, h.bucketKey, h.uploadId, h.partNumber, {
+
+		// Pass request.body through unchanged; size is validated via Content-Length header only.
+		const response = await b2.uploadPart(request.body, h.bucketKey, h.uploadId, h.partNumber, {
 			contentLength: h.contentLength,
 			md5: h.md5,
 			sha1: h.sha1,
 		});
 		return Response.json(response, { status: 200 });
 	} catch (e) {
-		if (isFileSizeExceededError(e)) {
-			throw new AppError("PAYLOAD_TOO_LARGE", {
-				message: e.message,
-				details: { code: "FILE_SIZE_EXCEEDED" },
-			});
-		}
+		// Stream size error handling disabled while stream size check is off.
+		// if (isFileSizeExceededError(e)) {
+		// 	throw new AppError("PAYLOAD_TOO_LARGE", {
+		// 		message: e.message,
+		// 		details: { code: "FILE_SIZE_EXCEEDED" },
+		// 	});
+		// }
 		throw e;
 	}
 }
@@ -270,19 +150,15 @@ export async function handleCompleteMultipartRoute(request: Request): Promise<Re
 		}
 
 		const kvState = await getMultipartKv(h.uploadId);
-		let extractedMetadata = kvState?.metadata;
 		const upstreamRes = await b2.completeMultipart(h.bucketKey, h.uploadId, parsedBody.data.parts);
 		if (upstreamRes.status === 200 && h.isCallback === "1") {
 			jiraya.schedulePostImageProcess(
 				h,
 				h.uploadId,
 				kvState?.fo_upload_id,
-				extractedMetadata,
 				kvState?.replace === true,
 				traceContext,
 			);
-			// Reusable seam for future multipart metadata extraction pipeline.
-			logMultipartMetadataSeam(h);
 		}
 		waitUntil(getMultipartUploadsKv().delete(h.uploadId).catch(() => undefined));
 
@@ -300,4 +176,3 @@ export async function handleAbortMultipartRoute(request: Request): Promise<Respo
 	waitUntil(getMultipartUploadsKv().delete(h.uploadId).catch(() => undefined));
 	return Response.json(response, { status: 200 });
 }
-
