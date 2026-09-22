@@ -42,6 +42,12 @@ export const XbzPartNumberHeader = headerParam("X-Bz-Part-Number", z.string(), t
 export const XbzContentLengthHeader = headerParam("X-Bz-Content-Length", z.string(), false, "Part size in bytes");
 export const ContentMd5Header = headerParam("Content-MD5", z.string(), false, "MD5 of the part body");
 export const FOCallbackHeader = headerParam("FO-Callback", z.enum(["0", "1"]), false, "If 1, schedules backend callback");
+export const FODeduplicateIdHeader = headerParam(
+	"FO-Deduplicate-Id",
+	z.string(),
+	false,
+	"Optional dedupe id forwarded to Jiraya as deduplicate_id",
+);
 export const FOIsGuestUploadHeader = headerParam(
 	"FO-Is-Guest-Upload",
 	z.string(),
@@ -74,6 +80,7 @@ export function registerRoutes() {
 				"X-Bz-File-Name": XbzFileNameHeader,
 				"X-Bz-Content-Type": XbzContentTypeHeader,
 				"X-Bz-Content-Sha1": XbzContentSha1Header,
+				"FO-Deduplicate-Id": FODeduplicateIdHeader,
 			}),
 			body: {
 				content: {
@@ -153,6 +160,7 @@ export function registerRoutes() {
 				"X-Bz-File-Name": XbzFileNameHeader,
 				"X-Bz-Upload-ID": XbzUploadIdHeader,
 				"FO-Callback": FOCallbackHeader,
+				"FO-Deduplicate-Id": FODeduplicateIdHeader,
 			}),
 			body: { content: { "application/json": { schema: CompleteMultipartBodySchema } } },
 		},

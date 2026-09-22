@@ -12,37 +12,47 @@ export const ErrorResponseSchema = z.object({
 	details: z.record(z.unknown()).optional(),
 });
 
+export const UploadOkDataSchema = z.object({
+	name: z.string().optional(),
+	id: z.string().optional(),
+	height: z.string().optional(),
+	width: z.string().optional(),
+	sha: z.string().optional(),
+	b2Id: z.string().optional(),
+	partNum: z.string().optional(),
+	fo_upload_id: z.string().optional(),
+});
+
 export const UploadOkResponseSchema = z.object({
 	ok: z.literal(true),
 	message: z.string(),
-	data: z.object({
-		name: z.string().optional(),
-		id: z.string().optional(),
-		height: z.string().optional(),
-		width: z.string().optional(),
-		sha: z.string().optional(),
-		b2Id: z.string().optional(),
-		partNum: z.string().optional(),
-	}),
+	data: UploadOkDataSchema,
+});
+
+export const StartMultipartDataSchema = z.object({
+	uploadId: z.string(),
+	bucket: z.string(),
+	key: z.string(),
+	fo_upload_id: z.string(),
 });
 
 export const StartMultipartResponseSchema = z.object({
-	ok: z.boolean(),
-	data: z
-		.object({
-			uploadId: z.string(),
-			bucket: z.string(),
-			key: z.string(),
-		})
-		.optional(),
-	message: z.string().optional(),
+	ok: z.literal(true),
+	message: z.string(),
+	data: StartMultipartDataSchema,
 });
 
-export const UploadPartResponseSchema = z.object({
+export const UploadPartDataSchema = z.object({
 	etag: z.string().nullable().optional(),
 	"x-amz-id-2": z.string().nullable().optional(),
 	partNumber: z.string(),
 	sha1: z.string().nullable().optional(),
+});
+
+export const UploadPartResponseSchema = z.object({
+	ok: z.literal(true),
+	message: z.string(),
+	data: UploadPartDataSchema,
 });
 
 export const CompleteMultipartBodySchema = z.object({
@@ -56,13 +66,11 @@ export const CompleteMultipartBodySchema = z.object({
 });
 
 export const FaceUploadResponseSchema = z.object({
-	ok: z.boolean(),
+	ok: z.literal(true),
 	message: z.string(),
-	data: z
-		.object({
-			uuid: z.string().uuid(),
-		})
-		.optional(),
+	data: z.object({
+		uuid: z.string().uuid(),
+	}),
 });
 
 export type UploadOkResponse = z.infer<typeof UploadOkResponseSchema>;

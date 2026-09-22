@@ -1,5 +1,6 @@
 import * as Sentry from "@sentry/cloudflare";
 import { SpanStatusCode, trace } from "@opentelemetry/api";
+import { jsonOkResponse } from "../http/responses";
 
 /**
  * Test endpoint for observability.
@@ -14,17 +15,11 @@ export async function handleDebugSentryRoute(request: Request): Promise<Response
 			console.log("[debug-sentry] console.log test", { timestamp: Date.now() });
 			console.warn("[debug-sentry] console.warn test");
 			console.error("[debug-sentry] console.error test");
-			return Response.json({
-				ok: true,
-				message: "Sent console logs — check OTEL Logs (not Sentry)",
-			});
+			return jsonOkResponse("Sent console logs — check OTEL Logs (not Sentry)");
 		}
 		case "capture": {
 			Sentry.captureException(new Error("debug-sentry captureException test"));
-			return Response.json({
-				ok: true,
-				message: "Captured exception via Sentry.captureException — check Sentry Issues",
-			});
+			return jsonOkResponse("Captured exception via Sentry.captureException — check Sentry Issues");
 		}
 		case "span": {
 			const tracer = trace.getTracer("upload-worker");

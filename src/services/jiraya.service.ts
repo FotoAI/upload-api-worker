@@ -1,14 +1,8 @@
-import { env, waitUntil } from "cloudflare:workers";
+import { env } from "cloudflare:workers";
+import { trace, context, propagation, SpanKind, SpanStatusCode } from "@opentelemetry/api";
 import { retryWithExponentialBackoff } from "../utils/retry";
 import type { UploadHeaders } from "../http/headers";
 import { AppError } from "../errors/app-error";
-
-export type TraceContextHeaders = {
-	traceparent?: string;
-	tracestate?: string;
-	baggage?: string;
-	sentryTrace?: string;
-};
 
 export class JirayaService {
 	private readonly endpoint: string;
@@ -24,23 +18,38 @@ export class JirayaService {
 		this.headers.append("Content-Type", "application/json");
 	}
 
-	schedulePostImageProcess(
+	/**
+	 * Returns a promise for the background work so the caller can sequence it
+	 * before the OTel flush via ctx.waitUntil. The caller must pass this promise
+	 * to ctx.waitUntil — do NOT fire-and-forget it.
+	 */
+	/**
+	 * Returns a promise for the background work so the caller can sequence it
+	 * before the OTel flush via ctx.waitUntil. The caller must pass this promise
+	 * to ctx.waitUntil — do NOT fire-and-forget it.
+	 */
+	postImageProcessBackground(
 		headerValues: UploadHeaders,
 		b2Id: string,
 		foUploadId?: string,
 		replace?: boolean,
-		traceContext?: TraceContextHeaders,
-	) {
-		waitUntil(
-			this.postImageProcess(headerValues, b2Id, foUploadId, replace, traceContext).catch((e) => {
-				console.error("[JirayaService] postImageProcess failed:", e);
-				return undefined;
-			}),
+	): Promise<void> {
+		// Capture context while the request span is still active so the child span
+		// is correctly parented even though this work runs after the response is sent.
+		const capturedCtx = context.active();
+		return context.with(capturedCtx, () =>
+			this.postImageProcess(headerValues, b2Id, foUploadId, replace).then(
+				() => undefined,
+				(e) => { console.error("[jiraya] postImageProcess failed:", e); },
+			),
 		);
 	}
 
-	scheduleDeleteImage(headerValues: UploadHeaders, traceContext?: TraceContextHeaders) {
-		waitUntil(this.deleteImage(headerValues, traceContext).catch(() => undefined));
+	deleteImageBackground(headerValues: UploadHeaders): Promise<void> {
+		const capturedCtx = context.active();
+		return context.with(capturedCtx, () =>
+			this.deleteImage(headerValues).then(() => undefined, () => undefined),
+		);
 	}
 
 	async postImageProcess(
@@ -48,7 +57,6 @@ export class JirayaService {
 		b2Id: string,
 		foUploadId?: string,
 		replace?: boolean,
-		traceContext?: TraceContextHeaders,
 	): Promise<Response> {
 		const url = `${this.endpoint}/internal/event/picture/process`;
 		const body = JSON.stringify({
@@ -71,47 +79,22 @@ export class JirayaService {
 			collection_ids: headerValues.collectionIds,
 			guest_upload: headerValues.isGuestUpload,
 			compression_factor: headerValues.isCompression ? headerValues.compressionFactor : undefined,
+			deduplicate_id: headerValues.deduplicateId,
 		});
 
-		console.log("[JirayaService] postImageProcess body", {
-			body,
-		});
+		console.info("[jiraya] postImageProcess", { eventId: headerValues.eventId, b2Id, foUploadId });
 
-		// const res = await retryWithExponentialBackoff(
-		// 	() => fetch(url, { method: "POST", headers: this.buildRequestHeaders(traceContext), body }),
-		// 	{
-		// 		maxAttempts: 5,
-		// 		baseDelayMs: 500,
-		// 		shouldRetry: (res) => res.status >= 500 && res.status < 600,
-		// 	},
-		// ).catch((e) => {
-		// 	throw new AppError("UPSTREAM_JIRAYA_FAILED", { details: { reason: "postImageProcess", error: String(e) } });
-		// });
-		try {
-			const res = await fetch(url, { method: "POST", headers: this.buildRequestHeaders(traceContext), body });
-			const responseBody = await res
-				.clone()
-				.text()
-				.catch(() => "<unreadable>");
-			console.log("[JirayaService] postImageProcess response", {
-				status: res.status,
-				ok: res.ok,
-				body: responseBody,
-			});
-			return res;
-		} catch (e) {
-			throw new AppError("UPSTREAM_JIRAYA_FAILED", { details: { reason: "postImageProcess", error: String(e) } });
-		}
-
-
+		return this.tracedFetch("POST /internal/event/picture/process", url, "POST", body);
 	}
 
-	async deleteImage(headerValues: UploadHeaders, traceContext?: TraceContextHeaders): Promise<Response> {
+	async deleteImage(headerValues: UploadHeaders): Promise<Response> {
 		const url = `${this.endpoint}/internal/image/delete`;
 		const body = JSON.stringify({ path: headerValues.rawPath });
 
-		const res = await retryWithExponentialBackoff(
-			() => fetch(url, { method: "DELETE", headers: this.buildRequestHeaders(traceContext), body }),
+		console.info("[jiraya] deleteImage", { rawPath: headerValues.rawPath });
+
+		return retryWithExponentialBackoff(
+			() => this.tracedFetch("DELETE /internal/image/delete", url, "DELETE", body),
 			{
 				maxAttempts: 5,
 				baseDelayMs: 500,
@@ -120,22 +103,50 @@ export class JirayaService {
 		).catch((e) => {
 			throw new AppError("UPSTREAM_JIRAYA_FAILED", { details: { reason: "deleteImage", error: String(e) } });
 		});
-
-		console.log("[JirayaService] deleteImage response", {
-			status: res.status,
-			ok: res.ok,
-		});
-
-		return res;
 	}
 
-	private buildRequestHeaders(traceContext?: TraceContextHeaders): Headers {
+	/** Wraps a single fetch in an OTel CLIENT span and injects W3C traceparent propagation headers. */
+	private async tracedFetch(spanName: string, url: string, method: string, body: string): Promise<Response> {
+		const tracer = trace.getTracer("jiraya-service");
+		const activeCtx = context.active();
+		const span = tracer.startSpan(spanName, { kind: SpanKind.CLIENT, attributes: { "http.method": method, "http.url": url } }, activeCtx);
+		const spanCtx = trace.setSpan(activeCtx, span);
+		const sc = span.spanContext();
+
+		console.info(`[jiraya] tracedFetch start`, {
+			span: spanName,
+			traceId: sc.traceId,
+			spanId: sc.spanId,
+			traceFlags: sc.traceFlags,
+		});
+
+		try {
+			const res = await context.with(spanCtx, () => {
+				const headers = this.buildRequestHeaders();
+				// Log the injected traceparent so we can verify the header value.
+				console.info(`[jiraya] outbound traceparent`, { traceparent: headers.get("traceparent"), span: spanName });
+				return fetch(url, { method, headers, body });
+			});
+			span.setAttribute("http.status_code", res.status);
+			span.setStatus({ code: res.status >= 500 ? SpanStatusCode.ERROR : SpanStatusCode.OK });
+			console.info(`[jiraya] tracedFetch done`, { span: spanName, status: res.status, traceId: sc.traceId, spanId: sc.spanId });
+			return res;
+		} catch (e) {
+			span.setStatus({ code: SpanStatusCode.ERROR, message: String(e) });
+			console.error(`[jiraya] tracedFetch error`, { span: spanName, error: String(e), traceId: sc.traceId, spanId: sc.spanId });
+			throw new AppError("UPSTREAM_JIRAYA_FAILED", { details: { reason: spanName, error: String(e) } });
+		} finally {
+			span.end();
+		}
+	}
+
+	/** Builds request headers with W3C traceparent injected from the active span context.
+	 *  Must be called inside a context.with(spanCtx, ...) block to inject the correct span. */
+	private buildRequestHeaders(): Headers {
 		const headers = new Headers(this.headers);
-		if (traceContext?.traceparent) headers.set("traceparent", traceContext.traceparent);
-		if (traceContext?.tracestate) headers.set("tracestate", traceContext.tracestate);
-		if (traceContext?.baggage) headers.set("baggage", traceContext.baggage);
-		if (traceContext?.sentryTrace) headers.set("sentry-trace", traceContext.sentryTrace);
+		propagation.inject(context.active(), headers, {
+			set: (carrier: Headers, key: string, value: string) => carrier.set(key, value),
+		});
 		return headers;
 	}
 }
-

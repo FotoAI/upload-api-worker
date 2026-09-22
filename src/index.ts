@@ -1,5 +1,5 @@
 import * as Sentry from "@sentry/cloudflare";
-import { instrument } from "@microlabs/otel-cf-workers";
+import { context } from "@opentelemetry/api";
 import { withCorsHeaders, handleCorsPreflight } from "./middleware/cors.middleware";
 import { authMiddleware } from "./middleware/auth.middleware";
 import { handleUploadLegacyRoute, handleUploadRoute } from "./routes/upload.routes";
@@ -12,9 +12,11 @@ import {
 import { handlePublicFaceRoute } from "./routes/public.routes";
 import { handleDocsOpenApiRoute, handleDocsRoute } from "./routes/docs.routes";
 import { handleDebugSentryRoute } from "./routes/debug.routes";
+import { handleVersionRoute } from "./routes/version.routes";
 import { errorHandler, notFoundHandler, reportErrorToSentry } from "./errors/error-handler";
+import { jsonOkResponse } from "./http/responses";
 import { getSentryOptions } from "./sentry/config";
-import { resolveOtelConfig } from "./otel/config";
+import { initOtelTracer, startFetchSpan, endFetchSpan, flushOtelTraces } from "./otel/tracer";
 import { flushOtelLogs, initOtelLogs } from "./otel/logs";
 
 const protectedPaths = new Set([
@@ -26,12 +28,16 @@ const protectedPaths = new Set([
 	"/upload-v3/abort-multipart",
 ]);
 
-async function routeRequest(request: Request): Promise<Response> {
+async function routeRequest(request: Request, env: Env, background: Promise<unknown>[]): Promise<Response> {
 	const url = new URL(request.url);
 	const path = url.pathname;
 
 	if (path === "/upload-v3/health" && request.method === "GET") {
-		return Response.json({ ok: true, message: "ok" }, { status: 200 });
+		return jsonOkResponse("ok");
+	}
+
+	if (path === "/upload-v3/version" && request.method === "GET") {
+		return handleVersionRoute(env);
 	}
 
 	if (path === "/upload-v3/debug-sentry" && request.method === "GET") {
@@ -53,10 +59,10 @@ async function routeRequest(request: Request): Promise<Response> {
 	}
 
 	if (path === "/upload-v3/upload" && request.method === "POST") {
-		return handleUploadRoute(request);
+		return handleUploadRoute(request, background);
 	}
 	if (path === "/upload-worker-s3" && request.method === "POST") {
-		return handleUploadLegacyRoute(request);
+		return handleUploadLegacyRoute(request, background);
 	}
 	if (path === "/upload-v3/start-multipart" && request.method === "GET") {
 		return handleStartMultipartRoute(request);
@@ -65,7 +71,7 @@ async function routeRequest(request: Request): Promise<Response> {
 		return handleUploadPartRoute(request);
 	}
 	if (path === "/upload-v3/complete-multipart" && request.method === "POST") {
-		return handleCompleteMultipartRoute(request);
+		return handleCompleteMultipartRoute(request, background);
 	}
 	if (path === "/upload-v3/abort-multipart" && request.method === "POST") {
 		return handleAbortMultipartRoute(request);
@@ -77,21 +83,51 @@ async function routeRequest(request: Request): Promise<Response> {
 const worker = {
 	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
 		initOtelLogs(env);
+		initOtelTracer(env);
+
+		const serviceName = env.OTEL_SERVICE_NAME ?? "upload-worker";
+		const { span, ctx: spanCtx } = startFetchSpan(request, serviceName);
+		const sc = span.spanContext();
+
+		// Collects background work (e.g. Jiraya postImageProcess) that must complete
+		// BEFORE the OTel flush, so their spans are included in the export.
+		const background: Promise<unknown>[] = [];
+
+		let response: Response | undefined;
 		try {
-			const preflightResponse = handleCorsPreflight(request);
-			if (preflightResponse) return preflightResponse;
-			const response = await routeRequest(request);
-			return withCorsHeaders(response, request);
+			response = await context.with(spanCtx, async () => {
+				const url = new URL(request.url);
+				console.info("[worker] request", {
+					method: request.method,
+					path: url.pathname,
+					traceId: sc.traceId,
+					spanId: sc.spanId,
+					traceFlags: sc.traceFlags,
+				});
+				const preflightResponse = handleCorsPreflight(request);
+				if (preflightResponse) return preflightResponse;
+				const res = await routeRequest(request, env, background);
+				console.info("[worker] response", { status: res.status, traceId: sc.traceId, spanId: sc.spanId });
+				return withCorsHeaders(res, request);
+			});
 		} catch (error) {
+			console.error("[worker] unhandled error", { error });
 			reportErrorToSentry(error);
-			return withCorsHeaders(errorHandler(error), request);
+			response = withCorsHeaders(errorHandler(error), request);
 		} finally {
-			// Never reject waitUntil: log flush is best-effort (OTLP 5xx must not surface as Uncaught).
-			ctx.waitUntil(flushOtelLogs().catch(() => undefined));
+			endFetchSpan(span, response?.status ?? 500);
+			// Flush AFTER background work settles so Jiraya spans are exported.
+			// Best-effort — allSettled ensures flush always runs even if background tasks fail.
+			ctx.waitUntil(
+				Promise.allSettled(background).then(() =>
+					Promise.allSettled([flushOtelLogs(), flushOtelTraces()])
+				)
+			);
 		}
+
+		// response is always set: either from the try block or the catch block
+		return response!;
 	},
 } satisfies ExportedHandler<Env>;
 
-const instrumentedWorker = instrument(worker, resolveOtelConfig);
-
-export default Sentry.withSentry((env) => getSentryOptions(env), instrumentedWorker);
+export default Sentry.withSentry((env) => getSentryOptions(env), worker);

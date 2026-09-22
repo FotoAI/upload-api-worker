@@ -1,6 +1,7 @@
 import { AwsClient } from "aws4fetch";
 import { Builder, parseStringPromise } from "xml2js";
 import { env } from "cloudflare:workers";
+import { trace, context, propagation, SpanKind, SpanStatusCode } from "@opentelemetry/api";
 import { AppError } from "../errors/app-error";
 
 type StartMultipartResult = {
@@ -14,18 +15,18 @@ export class B2Service {
 
 	constructor() {
 		this.aws = new AwsClient({
-			accessKeyId: env.AWS_ACCESS_KEY_ID as string,
-			secretAccessKey: env.AWS_SECRET_ACCESS_KEY as string,
-			region: env.AWS_DEFAULT_REGION as string,
+			accessKeyId: env.B2_APPLICATION_KEY_ID as string,
+			secretAccessKey: env.B2_APPLICATION_KEY as string,
+			region: env.B2_REGION as string,
 		});
-		this.endpoint = env.AWS_ENDPOINT as string;
+		this.endpoint = env.B2_ENDPOINT as string;
 	}
 
 	async startMultipart(key: string, contentType?: string): Promise<StartMultipartResult> {
 		const headers = new Headers();
 		if (contentType) headers.append("Content-Type", contentType);
 
-		const response = await this.aws.fetch(`${this.endpoint}/${key}?uploads`, {
+		const response = await this.tracedFetch("B2 startMultipart", `${this.endpoint}/${key}?uploads`, {
 			method: "POST",
 			headers,
 		});
@@ -49,10 +50,15 @@ export class B2Service {
 		};
 	}
 
-	async abortMultipart(uploadId: string, key: string): Promise<{ ok: boolean; message: string }> {
-		const response = await this.aws.fetch(`${this.endpoint}/${key}?uploadId=${uploadId}`, { method: "DELETE" });
-		if (response.status === 204) return { ok: true, message: "Multipart upload abort Success" };
-		return { ok: false, message: "Multipart upload abort Fail" };
+	async abortMultipart(uploadId: string, key: string): Promise<void> {
+		const response = await this.tracedFetch("B2 abortMultipart", `${this.endpoint}/${key}?uploadId=${uploadId}`, { method: "DELETE" });
+		if (response.status === 204) {
+			return;
+		}
+		const bodyText = await response.text();
+		throw new AppError("UPSTREAM_B2_FAILED", {
+			details: { status: response.status, uploadId, body: bodyText.slice(0, 2000) },
+		});
 	}
 
 	async completeMultipart(
@@ -73,7 +79,7 @@ export class B2Service {
 			},
 		});
 
-		return this.aws.fetch(`${this.endpoint}/${key}?uploadId=${uploadId}`, { method: "POST", body: xmlBody });
+		return this.tracedFetch("B2 completeMultipart", `${this.endpoint}/${key}?uploadId=${uploadId}`, { method: "POST", body: xmlBody });
 	}
 
 	async upload(body: BodyInit, key: string, contentType?: string, sha1?: string): Promise<Response> {
@@ -81,7 +87,7 @@ export class B2Service {
 		if (contentType) headers.append("Content-Type", contentType);
 		if (sha1) headers.append("X-Bz-Content-Sha1", sha1);
 
-		return this.aws.fetch(`${this.endpoint}/${key}`, {
+		return this.tracedFetch("B2 upload", `${this.endpoint}/${key}`, {
 			method: "PUT",
 			body,
 			headers,
@@ -99,7 +105,8 @@ export class B2Service {
 		if (opts.contentLength) requestHeaders.append("Content-Length", opts.contentLength);
 		if (opts.md5) requestHeaders.append("Content-MD5", opts.md5);
 
-		const response = await this.aws.fetch(
+		const response = await this.tracedFetch(
+			"B2 uploadPart",
 			`${this.endpoint}/${key}?partNumber=${encodeURIComponent(partNumber)}&uploadId=${encodeURIComponent(uploadId)}`,
 			{ method: "PUT", body, headers: requestHeaders },
 		);
@@ -132,6 +139,42 @@ export class B2Service {
 			partNumber,
 			sha1: opts.sha1 ?? null,
 		};
+	}
+
+	/** Wraps aws4fetch in an OTel CLIENT span and injects W3C traceparent propagation headers. */
+	private async tracedFetch(spanName: string, url: string, init: RequestInit): Promise<Response> {
+		const tracer = trace.getTracer("b2-service");
+		const activeCtx = context.active();
+		const span = tracer.startSpan(spanName, {
+			kind: SpanKind.CLIENT,
+			attributes: { "http.method": String(init.method ?? "GET"), "http.url": url },
+		}, activeCtx);
+		const spanCtx = trace.setSpan(activeCtx, span);
+		const sc = span.spanContext();
+
+		// console.info(`[b2] tracedFetch start`, { span: spanName, traceId: sc.traceId, spanId: sc.spanId, traceFlags: sc.traceFlags });
+
+		try {
+			const response = await context.with(spanCtx, () => {
+				// Inject OTel context into the headers before aws4fetch signs the request.
+				const headers = init.headers instanceof Headers ? init.headers : new Headers(init.headers as HeadersInit | undefined);
+				propagation.inject(context.active(), headers, {
+					set: (carrier: Headers, key: string, value: string) => carrier.set(key, value),
+				});
+				// console.info(`[b2] outbound traceparent`, { traceparent: headers.get("traceparent"), span: spanName });
+				return this.aws.fetch(url, { ...init, headers });
+			});
+			span.setAttribute("http.status_code", response.status);
+			span.setStatus({ code: response.status >= 500 ? SpanStatusCode.ERROR : SpanStatusCode.OK });
+			// console.info(`[b2] tracedFetch done`, { span: spanName, status: response.status, traceId: sc.traceId, spanId: sc.spanId });
+			return response;
+		} catch (e) {
+			span.setStatus({ code: SpanStatusCode.ERROR, message: String(e) });
+			// console.error(`[b2] tracedFetch error`, { span: spanName, error: String(e), traceId: sc.traceId, spanId: sc.spanId });
+			throw e;
+		} finally {
+			span.end();
+		}
 	}
 }
 

@@ -1,5 +1,5 @@
 import * as Sentry from "@sentry/cloudflare";
-import { ERROR_CODES } from "./error-codes";
+import { ERROR_CODES, type ErrorCode } from "./error-codes";
 import { AppError, isAppError } from "./app-error";
 
 /** Reports server-side failures to Sentry; skips expected client errors (4xx). */
@@ -52,4 +52,24 @@ export function notFoundHandler(): never {
 export function errorHandler(err: unknown): Response {
 	const { status, body } = toErrorResponse(err);
 	return Response.json(body, { status });
+}
+
+/** Builds a JSON error response matching {@link ErrorResponseSchema}. */
+export function jsonErrorResponse(
+	code: ErrorCode,
+	opts?: {
+		message?: string;
+		details?: Record<string, unknown>;
+		status?: number;
+		headers?: HeadersInit;
+	},
+): Response {
+	const meta = ERROR_CODES[code];
+	const body: ErrorResponse = {
+		ok: false,
+		code,
+		message: opts?.message ?? meta.publicMessage,
+		...(opts?.details ? { details: opts.details } : {}),
+	};
+	return Response.json(body, { status: opts?.status ?? meta.httpStatus, headers: opts?.headers });
 }

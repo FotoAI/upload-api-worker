@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { jsonErrorResponse } from "../errors/error-handler";
 import { buildOpenApiSpec } from "../openapi/build-spec";
 
 async function timingSafeEqualUtf8(a: string, b: string) {
@@ -64,21 +65,22 @@ function buildOriginFromRequest(request: Request): string {
 	return `${url.protocol}//${url.host}`;
 }
 
-function buildUnauthorizedResponse(status: number, message: string, includeAuthHeader = false): Response {
-	const headers = new Headers({ "Content-Type": "text/plain;charset=UTF-8" });
-	if (includeAuthHeader) {
-		headers.set("WWW-Authenticate", 'Basic realm="Upload API Docs"');
+function buildDocsUnauthorizedResponse(reason: "not_configured" | "missing" | "invalid" | "wrong"): Response {
+	if (reason === "not_configured") {
+		return jsonErrorResponse("INTERNAL_ERROR", {
+			message: "Documentation is not configured. Set DOCS_USERNAME and DOCS_PASSWORD.",
+			status: 503,
+		});
 	}
-	return new Response(message, { status, headers });
+	return jsonErrorResponse("UNAUTHORIZED", {
+		headers: { "WWW-Authenticate": 'Basic realm="Upload API Docs"' },
+	});
 }
 
 export async function handleDocsOpenApiRoute(request: Request): Promise<Response> {
 	const auth = await verifyDocsBasicAuth(request.headers.get("Authorization") ?? undefined);
 	if (!auth.ok) {
-		if (auth.reason === "not_configured") {
-			return buildUnauthorizedResponse(503, "Documentation is not configured. Set DOCS_USERNAME and DOCS_PASSWORD.");
-		}
-		return buildUnauthorizedResponse(401, "Unauthorized", true);
+		return buildDocsUnauthorizedResponse(auth.reason);
 	}
 
 	const origin = buildOriginFromRequest(request);
@@ -89,10 +91,7 @@ export async function handleDocsOpenApiRoute(request: Request): Promise<Response
 export async function handleDocsRoute(request: Request): Promise<Response> {
 	const auth = await verifyDocsBasicAuth(request.headers.get("Authorization") ?? undefined);
 	if (!auth.ok) {
-		if (auth.reason === "not_configured") {
-			return buildUnauthorizedResponse(503, "Documentation is not configured. Set DOCS_USERNAME and DOCS_PASSWORD.");
-		}
-		return buildUnauthorizedResponse(401, "Unauthorized", true);
+		return buildDocsUnauthorizedResponse(auth.reason);
 	}
 
 	const origin = buildOriginFromRequest(request);

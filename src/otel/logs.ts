@@ -65,22 +65,25 @@ export function initOtelLogs(env: Env): void {
 	if (consolePatched) return;
 	consolePatched = true;
 
+	// Capture the logger at patch time — tied to the provider registered above.
 	const logger = logs.getLogger(env.OTEL_SERVICE_NAME ?? "upload-worker");
 
 	const emit = (level: ConsoleLevel, originalFn: (...args: unknown[]) => void, args: unknown[]) => {
+		const body = formatLogBody(args);
 		const spanContext = trace.getActiveSpan()?.spanContext();
 		logger.emit({
 			severityNumber: SEVERITY[level],
 			severityText: level.toUpperCase(),
-			body: formatLogBody(args),
+			body,
 			attributes: {
 				"log.source": "console",
+				"log.level": level,
 			},
 			...(spanContext?.traceId && spanContext.spanId
 				? { traceId: spanContext.traceId, spanId: spanContext.spanId }
 				: {}),
 		});
-		otelDebug(env, `console.${level}`, { body: formatLogBody(args) });
+		otelDebug(env, `console.${level}`, { body });
 		originalFn(...args);
 	};
 

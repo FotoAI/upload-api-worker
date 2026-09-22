@@ -3,15 +3,14 @@
 	"version": "0.0.0",
 	"private": true,
 	"scripts": {
-		"deploy:prod": "wrangler deploy -e prod --outdir dist --upload-source-maps --var SENTRY_RELEASE:$(sentry-cli releases propose-version)",
-		"deploy:dev": "wrangler deploy -e dev --outdir dist --upload-source-maps --var SENTRY_RELEASE:$(sentry-cli releases propose-version)",
-		"deploy:staging": "wrangler deploy -e staging --outdir dist --upload-source-maps --var SENTRY_RELEASE:$(sentry-cli releases propose-version)",
+		"deploy:prod": "wrangler deploy -e prod --outdir dist --upload-source-maps --var SENTRY_RELEASE:${SENTRY_RELEASE} --var APP_VERSION:${APP_VERSION} --var GIT_SHA:${GIT_SHA}",
+		"deploy:dev": "wrangler deploy -e dev --outdir dist --upload-source-maps --var SENTRY_RELEASE:${SENTRY_RELEASE} --var APP_VERSION:${APP_VERSION} --var GIT_SHA:${GIT_SHA}",
+		"deploy:staging": "wrangler deploy -e staging --outdir dist --upload-source-maps --var SENTRY_RELEASE:${SENTRY_RELEASE} --var APP_VERSION:${APP_VERSION} --var GIT_SHA:${GIT_SHA}",
 		"dev": "wrangler dev",
 		"start": "wrangler dev",
 		"test": "vitest",
 		"cf-typegen": "wrangler types",
-		"sentry:sourcemaps": "_SENTRY_RELEASE=$(sentry-cli releases propose-version) && sentry-cli releases new $_SENTRY_RELEASE --org=fotoowlai --project=upload-worker && sentry-cli sourcemaps upload --org=fotoowlai --project=upload-worker --release=$_SENTRY_RELEASE --strip-prefix 'dist/..' dist",
-		"postdeploy": "pnpm sentry:sourcemaps"
+		"sentry:sourcemaps": "sentry-cli releases new $SENTRY_RELEASE --org=$SENTRY_ORG --project=$SENTRY_PROJECT && sentry-cli sourcemaps upload --org=$SENTRY_ORG --project=$SENTRY_PROJECT --release=$SENTRY_RELEASE --strip-prefix 'dist/..' dist && sentry-cli releases finalize $SENTRY_RELEASE"
 	},
 	"devDependencies": {
 		"@cloudflare/vitest-pool-workers": "^0.12.4",
@@ -24,11 +23,12 @@
 	},
 	"dependencies": {
 		"@asteasolutions/zod-to-openapi": "^8.5.0",
-		"@microlabs/otel-cf-workers": "1.0.0-rc.52",
 		"@opentelemetry/api": "^1.9.1",
 		"@opentelemetry/api-logs": "^0.218.0",
+		"@opentelemetry/context-async-hooks": "^2.10.0",
 		"@opentelemetry/core": "^2.7.1",
 		"@opentelemetry/exporter-logs-otlp-http": "^0.218.0",
+		"@opentelemetry/exporter-trace-otlp-http": "^0.221.0",
 		"@opentelemetry/resources": "^2.7.1",
 		"@opentelemetry/sdk-logs": "^0.218.0",
 		"@opentelemetry/sdk-trace-base": "^2.7.1",

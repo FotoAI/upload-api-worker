@@ -1,0 +1,99 @@
+name: Deploy Worker
+
+on:
+  push:
+    tags:
+      - deploy-dev*
+      - deploy-staging*
+      - deploy-prod-v*
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      SENTRY_ORG: ${{ vars.SENTRY_ORG }}
+      SENTRY_PROJECT: ${{ vars.SENTRY_PROJECT }}
+      SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Resolve deploy metadata
+        id: meta
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          GIT_SHA="$(git rev-parse --short HEAD)"
+
+          if [[ "$TAG" == deploy-prod-v* ]]; then
+            if [[ ! "$TAG" =~ ^deploy-prod-v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+              echo "Prod tags must match deploy-prod-vX.Y.Z (e.g. deploy-prod-v1.0.0)"
+              exit 1
+            fi
+            ENV="prod"
+            APP_VERSION="v${TAG#deploy-prod-v}"
+            SENTRY_RELEASE="$APP_VERSION"
+          elif [[ "$TAG" == deploy-staging* ]]; then
+            ENV="staging"
+            APP_VERSION="$GIT_SHA"
+            SENTRY_RELEASE="$GIT_SHA"
+          elif [[ "$TAG" == deploy-dev* ]]; then
+            ENV="dev"
+            APP_VERSION="$GIT_SHA"
+            SENTRY_RELEASE="$GIT_SHA"
+          else
+            echo "Unsupported tag: $TAG"
+            exit 1
+          fi
+
+          echo "env=$ENV" >> "$GITHUB_OUTPUT"
+          echo "app_version=$APP_VERSION" >> "$GITHUB_OUTPUT"
+          echo "sentry_release=$SENTRY_RELEASE" >> "$GITHUB_OUTPUT"
+          echo "git_sha=$GIT_SHA" >> "$GITHUB_OUTPUT"
+
+          echo "ENV=$ENV" >> "$GITHUB_ENV"
+          echo "APP_VERSION=$APP_VERSION" >> "$GITHUB_ENV"
+          echo "SENTRY_RELEASE=$SENTRY_RELEASE" >> "$GITHUB_ENV"
+          echo "GIT_SHA=$GIT_SHA" >> "$GITHUB_ENV"
+
+      - name: Deploy to Cloudflare
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: >-
+            deploy -e ${{ steps.meta.outputs.env }}
+            --outdir dist
+            --upload-source-maps
+            --var SENTRY_RELEASE:${{ steps.meta.outputs.sentry_release }}
+            --var APP_VERSION:${{ steps.meta.outputs.app_version }}
+            --var GIT_SHA:${{ steps.meta.outputs.git_sha }}
+
+      - name: Upload Sentry sourcemaps
+        run: |
+          pnpm exec sentry-cli releases new "$SENTRY_RELEASE" --org="$SENTRY_ORG" --project="$SENTRY_PROJECT"
+          pnpm exec sentry-cli sourcemaps upload \
+            --org="$SENTRY_ORG" \
+            --project="$SENTRY_PROJECT" \
+            --release="$SENTRY_RELEASE" \
+            --strip-prefix 'dist/..' \
+            dist
+          pnpm exec sentry-cli releases finalize "$SENTRY_RELEASE"

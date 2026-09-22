@@ -1,4 +1,5 @@
 import { env } from "cloudflare:workers";
+import { trace, context, propagation, SpanKind, SpanStatusCode } from "@opentelemetry/api";
 import { AppError } from "../errors/app-error";
 import { generateUUIDv3Like } from "../utils/uuid";
 
@@ -47,7 +48,7 @@ export class AuthService {
 
 		let response: Response;
 		try {
-			response = await fetch(authUrl.toString(), { method: "GET", headers: { Authorization: authHeader } });
+			response = await this.tracedFetch(authUrl.toString(), authHeader!);
 		} catch (e) {
 			throw new AppError("UPSTREAM_AUTH_FAILED", { details: { error: String(e) } });
 		}
@@ -67,6 +68,41 @@ export class AuthService {
 			}
 		}
 		return data;
+	}
+
+	/** Wraps the auth fetch in an OTel CLIENT span and injects W3C traceparent propagation headers. */
+	private async tracedFetch(url: string, authHeader: string): Promise<Response> {
+		const tracer = trace.getTracer("auth-service");
+		const activeCtx = context.active();
+		const span = tracer.startSpan("Auth checkAuth", {
+			kind: SpanKind.CLIENT,
+			attributes: { "http.method": "GET", "http.url": url },
+		}, activeCtx);
+		const spanCtx = trace.setSpan(activeCtx, span);
+		const sc = span.spanContext();
+
+		console.info("[auth] tracedFetch start", { traceId: sc.traceId, spanId: sc.spanId, traceFlags: sc.traceFlags });
+
+		try {
+			const response = await context.with(spanCtx, () => {
+				const headers = new Headers({ Authorization: authHeader });
+				propagation.inject(context.active(), headers, {
+					set: (carrier: Headers, key: string, value: string) => carrier.set(key, value),
+				});
+				console.info("[auth] outbound traceparent", { traceparent: headers.get("traceparent") });
+				return fetch(url, { method: "GET", headers });
+			});
+			span.setAttribute("http.status_code", response.status);
+			span.setStatus({ code: response.status >= 500 ? SpanStatusCode.ERROR : SpanStatusCode.OK });
+			console.info("[auth] tracedFetch done", { status: response.status, traceId: sc.traceId, spanId: sc.spanId });
+			return response;
+		} catch (e) {
+			span.setStatus({ code: SpanStatusCode.ERROR, message: String(e) });
+			console.error("[auth] tracedFetch error", { error: String(e), traceId: sc.traceId, spanId: sc.spanId });
+			throw e;
+		} finally {
+			span.end();
+		}
 	}
 }
 

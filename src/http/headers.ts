@@ -77,6 +77,7 @@ export const UploadHeadersSchema = z.object({
 	datetime: z.string().optional(),
 	collectionIds: z.array(z.string()).optional(),
 	isGuestUpload: GuestUploadHeaderSchema,
+	deduplicateId: z.string().optional(),
 
 	isCompression: z.boolean().optional(),
 	compressionFactor: z.number().optional(),
@@ -135,6 +136,7 @@ export function parseUploadHeaders(headers: HeaderSource): UploadHeaders {
 		datetime: getHeader(headers, "FO-Date-Time"),
 		collectionIds: parsedCollectionIds,
 		isGuestUpload: getHeader(headers, "FO-Is-Guest-Upload"),
+		deduplicateId: getHeader(headers, "FO-Deduplicate-Id"),
 
 		isCompression,
 		compressionFactor: Number.isFinite(compressionFactor) ? compressionFactor : undefined,
